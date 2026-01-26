@@ -487,6 +487,20 @@ def get_expiry_data():
         return jsonify({"error": f"An internal error occurred: {str(e)}"}), 500
 
 if __name__ == '__main__':
+    from werkzeug.middleware.dispatcher import DispatcherMiddleware
+    from werkzeug.exceptions import NotFound
+
     port = int(os.environ.get('HTTP_PLATFORM_PORT', 5006))
-    logging.info(f"Starting Migrated Archiving Backend on host 0.0.0.0 port {port}")
-    serve(app, host='0.0.0.0', port=port, threads=50)
+    base_path = os.environ.get('APP_BASE_PATH')
+
+    if base_path:
+        logging.info(f"Running with APP_BASE_PATH: {base_path}")
+        
+        hosted_app = DispatcherMiddleware(NotFound(), {
+            base_path: app
+        })
+    else:
+        hosted_app = app
+
+    logging.info(f"Starting Archiving Backend on host 0.0.0.0 port {port}")
+    serve(hosted_app, host='0.0.0.0', port=port, threads=50)
