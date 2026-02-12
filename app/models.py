@@ -143,6 +143,36 @@ class Horse(Base):
 
     # Relationships
     owner: Mapped["User"] = relationship(back_populates="horses")
+    images: Mapped[list["HorseImage"]] = relationship(
+        back_populates="horse", cascade="all, delete-orphan", order_by="HorseImage.display_order"
+    )
 
     def __repr__(self) -> str:
         return f"<Horse {self.title} ({self.breed})>"
+
+
+class HorseImage(Base):
+    __tablename__ = "horse_images"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    horse_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("horses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    image_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    # Relationships
+    horse: Mapped["Horse"] = relationship(back_populates="images")
+
+    def __repr__(self) -> str:
+        return f"<HorseImage {self.id} for Horse {self.horse_id}>"

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import engine, Base, get_db
-from app.models import User, UserProfile, Horse, HorseGender, UserRole
+from app.models import User, UserProfile, Horse, HorseGender, UserRole, HorseImage
 from app.schemas import (
     SignupRequest,
     LoginRequest,
@@ -337,7 +337,10 @@ async def admin_list_listings(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(get_current_admin),
 ):
-    query = select(Horse).options(selectinload(Horse.owner).selectinload(User.profile)).order_by(Horse.created_at.desc())
+    query = select(Horse).options(
+        selectinload(Horse.owner).selectinload(User.profile),
+        selectinload(Horse.images)
+    ).order_by(Horse.created_at.desc())
     result = await db.execute(query)
     return result.scalars().all()
 
@@ -363,7 +366,10 @@ async def list_horses(
     owner_id: Optional[uuid.UUID] = Query(None, description="Filter by owner ID"),
 ):
     # Build base query
-    query = select(Horse).options(selectinload(Horse.owner).selectinload(User.profile))
+    query = select(Horse).options(
+        selectinload(Horse.owner).selectinload(User.profile),
+        selectinload(Horse.images)
+    )
 
     # Apply dynamic filters
     if owner_id is not None:
@@ -407,6 +413,10 @@ async def create_horse(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # Determine image URLs to use
+    image_urls = body.image_urls or ([body.image_url] if body.image_url else [])
+    
+    # Create horse with primary image (first in list for backward compatibility)
     horse = Horse(
         owner_id=current_user.id,
         title=body.title,
@@ -419,12 +429,33 @@ async def create_horse(
         description=body.description,
         vet_check_available=body.vet_check_available,
         vet_certificate_url=body.vet_certificate_url,
-        image_url=body.image_url,
+        image_url=image_urls[0] if image_urls else None,  # Primary image for backward compatibility
     )
     db.add(horse)
+    await db.flush()  # Get horse.id before creating images
+    
+    # Create HorseImage records for all images
+    for idx, url in enumerate(image_urls):
+        horse_image = HorseImage(
+            horse_id=horse.id,
+            image_url=url,
+            display_order=idx,
+        )
+        db.add(horse_image)
+    
     await db.commit()
-    await db.refresh(horse, attribute_names=["owner"])
-
+    
+    # Reload with relationships
+    result = await db.execute(
+        select(Horse)
+        .where(Horse.id == horse.id)
+        .options(
+            selectinload(Horse.owner).selectinload(User.profile),
+            selectinload(Horse.images)
+        )
+    )
+    horse = result.scalar_one()
+    
     return horse
 
 
@@ -440,9 +471,14 @@ async def update_horse(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Fetch horse
+    # Fetch horse with images
     result = await db.execute(
-        select(Horse).where(Horse.id == horse_id).options(selectinload(Horse.owner).selectinload(User.profile))
+        select(Horse)
+        .where(Horse.id == horse_id)
+        .options(
+            selectinload(Horse.owner).selectinload(User.profile),
+            selectinload(Horse.images)
+        )
     )
     horse = result.scalar_one_or_none()
     
@@ -474,11 +510,42 @@ async def update_horse(
         horse.vet_check_available = body.vet_check_available
     if body.vet_certificate_url is not None:
         horse.vet_certificate_url = body.vet_certificate_url
-    if body.image_url is not None:
+    
+    # Handle image updates
+    if body.image_urls is not None:
+        # Delete existing images
+        for img in horse.images:
+            await db.delete(img)
+        await db.flush()
+        
+        # Create new images
+        for idx, url in enumerate(body.image_urls):
+            horse_image = HorseImage(
+                horse_id=horse.id,
+                image_url=url,
+                display_order=idx,
+            )
+            db.add(horse_image)
+        
+        # Update primary image_url for backward compatibility
+        horse.image_url = body.image_urls[0] if body.image_urls else None
+    elif body.image_url is not None:
+        # Backward compatibility: single image_url update
         horse.image_url = body.image_url
 
     await db.commit()
-    await db.refresh(horse)
+    
+    # Reload with relationships
+    result = await db.execute(
+        select(Horse)
+        .where(Horse.id == horse.id)
+        .options(
+            selectinload(Horse.owner).selectinload(User.profile),
+            selectinload(Horse.images)
+        )
+    )
+    horse = result.scalar_one()
+    
     return horse
 
 

@@ -74,7 +74,8 @@ class HorseCreateRequest(BaseModel):
     description: str | None = None
     vet_check_available: bool = False
     vet_certificate_url: str | None = None
-    image_url: str | None = None
+    image_url: str | None = None  # Deprecated: use image_urls instead
+    image_urls: list[str] | None = None  # List of image URLs
 
     @model_validator(mode='after')
     def validate_vet_certificate(self):
@@ -94,7 +95,8 @@ class HorseUpdateRequest(BaseModel):
     description: str | None = None
     vet_check_available: bool | None = None
     vet_certificate_url: str | None = None
-    image_url: str | None = None
+    image_url: str | None = None  # Deprecated: use image_urls instead
+    image_urls: list[str] | None = None  # Replace all images with this list
 
     @model_validator(mode='after')
     def validate_vet_certificate(self):
@@ -105,6 +107,15 @@ class HorseUpdateRequest(BaseModel):
 
 
 # ── Horse Responses ───────────────────────────────────────────────────────────
+
+
+class HorseImageResponse(BaseModel):
+    id: uuid.UUID
+    image_url: str
+    display_order: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class HorseOwnerResponse(BaseModel):
@@ -145,10 +156,11 @@ class HorseResponse(BaseModel):
     description: str | None
     vet_check_available: bool
     vet_certificate_url: str | None
-    image_url: str | None
+    image_url: str | None  # Deprecated: use images instead
     created_at: datetime
     updated_at: datetime
     owner: HorseOwnerResponse | None = None
+    images: list[HorseImageResponse] = []  # List of all images
 
     model_config = {"from_attributes": True}
 
