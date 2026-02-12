@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
 # ── Auth Requests ─────────────────────────────────────────────────────────────
@@ -38,6 +38,7 @@ class UserResponse(BaseModel):
     role: str
     is_verified: bool
     profile: UserProfileResponse | None = None
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -72,7 +73,14 @@ class HorseCreateRequest(BaseModel):
     height: float | None = Field(None, gt=0)
     description: str | None = None
     vet_check_available: bool = False
+    vet_certificate_url: str | None = None
     image_url: str | None = None
+
+    @model_validator(mode='after')
+    def validate_vet_certificate(self):
+        if self.vet_check_available and not self.vet_certificate_url:
+            raise ValueError('vet_certificate_url is required when vet_check_available is True')
+        return self
 
 
 class HorseUpdateRequest(BaseModel):
@@ -85,16 +93,43 @@ class HorseUpdateRequest(BaseModel):
     height: float | None = Field(None, gt=0)
     description: str | None = None
     vet_check_available: bool | None = None
+    vet_certificate_url: str | None = None
     image_url: str | None = None
+
+    @model_validator(mode='after')
+    def validate_vet_certificate(self):
+        if self.vet_check_available and not self.vet_certificate_url:
+            raise ValueError('vet_certificate_url is required when vet_check_available is True')
+        return self
+
 
 
 # ── Horse Responses ───────────────────────────────────────────────────────────
 
+
 class HorseOwnerResponse(BaseModel):
     id: uuid.UUID
     email: str
+    is_verified: bool
+    phone_number: str | None = None
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode='before')
+    @classmethod
+    def extract_phone_from_profile(cls, data):
+        # If data is a SQLAlchemy model object
+        if hasattr(data, 'profile'):
+            profile = getattr(data, 'profile', None)
+            if profile and hasattr(profile, 'phone_number'):
+                # Create a dict with all needed fields
+                return {
+                    'id': data.id,
+                    'email': data.email,
+                    'is_verified': data.is_verified,
+                    'phone_number': profile.phone_number
+                }
+        return data
 
 
 class HorseResponse(BaseModel):
@@ -109,6 +144,7 @@ class HorseResponse(BaseModel):
     height: float | None
     description: str | None
     vet_check_available: bool
+    vet_certificate_url: str | None
     image_url: str | None
     created_at: datetime
     updated_at: datetime

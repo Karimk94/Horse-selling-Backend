@@ -337,7 +337,7 @@ async def admin_list_listings(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(get_current_admin),
 ):
-    query = select(Horse).options(selectinload(Horse.owner)).order_by(Horse.created_at.desc())
+    query = select(Horse).options(selectinload(Horse.owner).selectinload(User.profile)).order_by(Horse.created_at.desc())
     result = await db.execute(query)
     return result.scalars().all()
 
@@ -363,7 +363,7 @@ async def list_horses(
     owner_id: Optional[uuid.UUID] = Query(None, description="Filter by owner ID"),
 ):
     # Build base query
-    query = select(Horse).options(selectinload(Horse.owner))
+    query = select(Horse).options(selectinload(Horse.owner).selectinload(User.profile))
 
     # Apply dynamic filters
     if owner_id is not None:
@@ -418,6 +418,7 @@ async def create_horse(
         height=body.height,
         description=body.description,
         vet_check_available=body.vet_check_available,
+        vet_certificate_url=body.vet_certificate_url,
         image_url=body.image_url,
     )
     db.add(horse)
@@ -441,7 +442,7 @@ async def update_horse(
 ):
     # Fetch horse
     result = await db.execute(
-        select(Horse).where(Horse.id == horse_id).options(selectinload(Horse.owner))
+        select(Horse).where(Horse.id == horse_id).options(selectinload(Horse.owner).selectinload(User.profile))
     )
     horse = result.scalar_one_or_none()
     
@@ -471,6 +472,8 @@ async def update_horse(
         horse.description = body.description
     if body.vet_check_available is not None:
         horse.vet_check_available = body.vet_check_available
+    if body.vet_certificate_url is not None:
+        horse.vet_certificate_url = body.vet_certificate_url
     if body.image_url is not None:
         horse.image_url = body.image_url
 
