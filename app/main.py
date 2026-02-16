@@ -1,15 +1,9 @@
+import random
+import string
+from datetime import datetime, timedelta, timezone
 import uuid
-from contextlib import asynccontextmanager
-from typing import Optional
 
-from fastapi import FastAPI, Depends, HTTPException, Query, status
-from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
-
-from app.database import engine, Base, get_db
-from app.models import User, UserProfile, Horse, HorseGender, UserRole, HorseImage
+# ... imports ...
 from app.schemas import (
     SignupRequest,
     LoginRequest,
@@ -24,11 +18,67 @@ from app.schemas import (
     HorseUpdateRequest,
     UserRoleUpdate,
     AdminUserUpdate,
+    AddFavoriteRequest,
+    FavoriteResponse,
+    AdminApproveListingRequest,
+    AdminRejectListingRequest,
+    OTPRequest,
+    VerifyOTPRequest,
+)
+from app.email_service import (
+    send_pending_review_notification,
+    send_listing_approved_email,
+    send_listing_rejected_email,
+    send_verification_email,
+    send_otp_email,
+)
+# ...
+
+
+
+from contextlib import asynccontextmanager
+from typing import Optional
+
+from fastapi import FastAPI, Depends, HTTPException, Query, status
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.database import engine, Base, get_db
+from app.models import User, UserProfile, Horse, HorseGender, UserRole, HorseImage, Favorite
+from app.config import BASE_URL
+from app.schemas import (
+    SignupRequest,
+    LoginRequest,
+    TokenResponse,
+    TokenResponse,
+    UserResponse,
+    UserProfileUpdate,
+    HorseCreateRequest,
+    HorseResponse,
+    HorseListResponse,
+    HorseUpdateRequest,
+    HorseUpdateRequest,
+    UserRoleUpdate,
+    AdminUserUpdate,
+    AddFavoriteRequest,
+    FavoriteResponse,
+    AdminApproveListingRequest,
+    AdminRejectListingRequest,
+)
+from app.email_service import (
+    send_pending_review_notification,
+    send_listing_approved_email,
+    send_listing_rejected_email,
+    send_verification_email,
 )
 from app.auth import (
     hash_password,
     verify_password,
     create_access_token,
+    create_verification_token,
+    verify_token,
     get_current_user,
     get_current_admin,
 )
@@ -103,6 +153,7 @@ async def signup(body: SignupRequest, db: AsyncSession = Depends(get_db)):
         email=body.email,
         password_hash=hash_password(body.password),
         role=UserRole(body.role),
+        is_verified=False,  # Start as unverified
     )
     db.add(user)
     await db.flush()  # populate user.id before creating profile
@@ -118,6 +169,11 @@ async def signup(body: SignupRequest, db: AsyncSession = Depends(get_db)):
 
     await db.commit()
     await db.refresh(user)
+
+    # Generate verification token and send email
+    verification_token = create_verification_token(user.email)
+    verification_link = f"{BASE_URL}/auth/verify-email?token={verification_token}"
+    send_verification_email(user.email, verification_token, verification_link)
 
     access_token = create_access_token(data={"sub": user.email})
     return TokenResponse(access_token=access_token)
@@ -141,6 +197,157 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
 
     access_token = create_access_token(data={"sub": user.email})
     return TokenResponse(access_token=access_token)
+
+
+@app.get(
+    "/auth/verify-email",
+    tags=["Authentication"],
+    summary="Verify user email address",
+)
+async def verify_email(token: str, db: AsyncSession = Depends(get_db)):
+    """Verify email by token from the verification link."""
+    try:
+        payload = verify_token(token)
+        
+        # Check if it's a verification token
+        if payload.get("type") != "verification":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid token type",
+            )
+        
+        user_email = payload.get("sub")
+        if not user_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid token",
+            )
+        
+        # Find user and mark as verified
+        result = await db.execute(select(User).where(User.email == user_email))
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+        
+        if user.is_verified:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already verified",
+            )
+        
+        # Mark as verified
+        user.is_verified = True
+        db.add(user)
+        await db.commit()
+        
+        return {"message": "Email verified successfully"}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification token",
+        )
+
+
+@app.post(
+    "/auth/send-otp",
+    status_code=status.HTTP_200_OK,
+    tags=["Authentication"],
+    summary="Send OTP for email verification",
+)
+async def send_otp(body: OTPRequest, db: AsyncSession = Depends(get_db)):
+    # Find user
+    result = await db.execute(select(User).where(User.email == body.email))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    
+    if user.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already verified",
+        )
+    
+    # Generate 6-digit OTP
+    otp = ''.join(random.choices(string.digits, k=6))
+    
+    # Set expiry (10 minutes)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+    
+    user.verification_code = otp
+    user.verification_code_expires_at = expires_at
+    
+    await db.commit()
+    
+    # Send email
+    send_otp_email(user.email, otp)
+    
+    return {"message": "OTP sent successfully"}
+
+
+@app.post(
+    "/auth/verify-otp",
+    status_code=status.HTTP_200_OK,
+    tags=["Authentication"],
+    summary="Verify email with OTP",
+)
+async def verify_otp(body: VerifyOTPRequest, db: AsyncSession = Depends(get_db)):
+    # Find user
+    result = await db.execute(select(User).where(User.email == body.email))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    
+    if user.is_verified:
+        return {"message": "Email already verified"}
+        
+    if not user.verification_code or not user.verification_code_expires_at:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No OTP requested",
+        )
+        
+    # Check expiry
+    if datetime.now(timezone.utc) > user.verification_code_expires_at:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OTP expired",
+        )
+        
+    # Check match
+    if user.verification_code != body.otp:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid OTP",
+        )
+        
+    # Mark verified and clear OTP
+    user.is_verified = True
+    user.verification_code = None
+    user.verification_code_expires_at = None
+    
+    await db.commit()
+    
+    return {"message": "Email verified successfully"}
+
+
+
+
+
+
 
 
 
@@ -185,6 +392,10 @@ async def update_profile_endpoint(
     if not user.profile:
         user.profile = UserProfile(user_id=user.id)
     
+    if body.first_name is not None:
+        user.profile.first_name = body.first_name
+    if body.last_name is not None:
+        user.profile.last_name = body.last_name
     if body.phone_number is not None:
         # Check uniqueness if changing
         if user.profile.phone_number != body.phone_number:
@@ -345,6 +556,112 @@ async def admin_list_listings(
     return result.scalars().all()
 
 
+@app.get(
+    "/api/v1/admin/listings/pending",
+    response_model=list[HorseResponse],
+    tags=["Admin"],
+    summary="List pending listings for review (Admin only)",
+)
+async def admin_list_pending_listings(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    query = select(Horse).where(
+        Horse.status == "pending_review"
+    ).options(
+        selectinload(Horse.owner).selectinload(User.profile),
+        selectinload(Horse.images)
+    ).order_by(Horse.created_at.desc())
+    result = await db.execute(query)
+    return result.scalars().all()
+
+
+@app.post(
+    "/api/v1/admin/listings/{horse_id}/approve",
+    response_model=HorseResponse,
+    tags=["Admin"],
+    summary="Approve a horse listing (Admin only)",
+)
+async def admin_approve_listing(
+    horse_id: uuid.UUID,
+    body: AdminApproveListingRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    # Get the horse listing
+    result = await db.execute(
+        select(Horse)
+        .where(Horse.id == horse_id)
+        .options(
+            selectinload(Horse.owner).selectinload(User.profile),
+            selectinload(Horse.images)
+        )
+    )
+    horse = result.scalar_one_or_none()
+    
+    if not horse:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    
+    if horse.status != "pending_review":
+        raise HTTPException(status_code=400, detail="Only pending listings can be approved")
+    
+    # Update status to approved
+    horse.status = "approved"
+    horse.rejection_reason = None  # Clear any previous rejection reason
+    db.add(horse)
+    await db.commit()
+    await db.refresh(horse)
+    
+    # Send approval email to seller
+    seller = horse.owner
+    send_listing_approved_email(seller.email, horse.title)
+    
+    return horse
+
+
+@app.post(
+    "/api/v1/admin/listings/{horse_id}/reject",
+    response_model=HorseResponse,
+    tags=["Admin"],
+    summary="Reject a horse listing with reason (Admin only)",
+)
+async def admin_reject_listing(
+    horse_id: uuid.UUID,
+    body: AdminRejectListingRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    # Get the horse listing
+    result = await db.execute(
+        select(Horse)
+        .where(Horse.id == horse_id)
+        .options(
+            selectinload(Horse.owner).selectinload(User.profile),
+            selectinload(Horse.images)
+        )
+    )
+    horse = result.scalar_one_or_none()
+    
+    if not horse:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    
+    if horse.status != "pending_review":
+        raise HTTPException(status_code=400, detail="Only pending listings can be rejected")
+    
+    # Update status to rejected and store reason
+    horse.status = "rejected"
+    horse.rejection_reason = body.reason
+    db.add(horse)
+    await db.commit()
+    await db.refresh(horse)
+    
+    # Send rejection email to seller
+    seller = horse.owner
+    send_listing_rejected_email(seller.email, horse.title, body.reason)
+    
+    return horse
+
+
 # ── Horse listing endpoints ───────────────────────────────────────────────────
 
 @app.get(
@@ -370,6 +687,9 @@ async def list_horses(
         selectinload(Horse.owner).selectinload(User.profile),
         selectinload(Horse.images)
     )
+
+    # Only show approved listings to public users
+    query = query.where(Horse.status == "approved")
 
     # Apply dynamic filters
     if owner_id is not None:
@@ -413,10 +733,17 @@ async def create_horse(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # Check if user email is verified
+    if not current_user.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Please verify your email address before creating a listing",
+        )
+    
     # Determine image URLs to use
     image_urls = body.image_urls or ([body.image_url] if body.image_url else [])
     
-    # Create horse with primary image (first in list for backward compatibility)
+    # Create horse with status as PENDING_REVIEW
     horse = Horse(
         owner_id=current_user.id,
         title=body.title,
@@ -430,6 +757,7 @@ async def create_horse(
         vet_check_available=body.vet_check_available,
         vet_certificate_url=body.vet_certificate_url,
         image_url=image_urls[0] if image_urls else None,  # Primary image for backward compatibility
+        status="pending_review",
     )
     db.add(horse)
     await db.flush()  # Get horse.id before creating images
@@ -455,6 +783,14 @@ async def create_horse(
         )
     )
     horse = result.scalar_one()
+    
+    # Send notification to all admins about pending review
+    admin_result = await db.execute(select(User).where(User.role == UserRole.ADMIN))
+    admin_users = admin_result.scalars().all()
+    admin_emails = [admin.email for admin in admin_users]
+    
+    if admin_emails:
+        send_pending_review_notification(admin_emails, horse.title, current_user.email)
     
     return horse
 
@@ -572,4 +908,116 @@ async def delete_horse(
 
     await db.delete(horse)
     await db.commit()
+
+
+# ── Favorite endpoints ────────────────────────────────────────────────────────
+
+@app.post(
+    "/api/v1/favorites",
+    response_model=FavoriteResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Favorites"],
+    summary="Add a horse to favorites",
+)
+async def add_favorite(
+    body: AddFavoriteRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Check if horse exists
+    result = await db.execute(select(Horse).where(Horse.id == body.horse_id))
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Horse not found")
+    
+    # Check if already favorited
+    result = await db.execute(
+        select(Favorite).where(
+            (Favorite.user_id == current_user.id) & (Favorite.horse_id == body.horse_id)
+        )
+    )
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Horse already in favorites")
+    
+    favorite = Favorite(user_id=current_user.id, horse_id=body.horse_id)
+    db.add(favorite)
+    await db.commit()
+    await db.refresh(favorite)
+    
+    return favorite
+
+
+@app.delete(
+    "/api/v1/favorites/{horse_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Favorites"],
+    summary="Remove a horse from favorites",
+)
+async def remove_favorite(
+    horse_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Favorite).where(
+            (Favorite.user_id == current_user.id) & (Favorite.horse_id == horse_id)
+        )
+    )
+    favorite = result.scalar_one_or_none()
+    
+    if not favorite:
+        raise HTTPException(status_code=404, detail="Favorite not found")
+    
+    await db.delete(favorite)
+    await db.commit()
+
+
+@app.get(
+    "/api/v1/favorites",
+    response_model=HorseListResponse,
+    tags=["Favorites"],
+    summary="Get user's favorite horses",
+)
+async def get_favorites(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Get all favorite horse_ids for current user
+    result = await db.execute(
+        select(Favorite.horse_id).where(Favorite.user_id == current_user.id)
+    )
+    favorite_ids = [row[0] for row in result.fetchall()]
+    
+    if not favorite_ids:
+        return HorseListResponse(total=0, horses=[])
+    
+    # Get all horses with these IDs
+    result = await db.execute(
+        select(Horse)
+        .where(Horse.id.in_(favorite_ids))
+        .options(selectinload(Horse.owner).selectinload(User.profile), selectinload(Horse.images))
+        .order_by(Horse.created_at.desc())
+    )
+    horses = result.scalars().all()
+    
+    return HorseListResponse(total=len(horses), horses=horses)
+
+
+@app.get(
+    "/api/v1/horses/{horse_id}/is-favorite",
+    tags=["Favorites"],
+    summary="Check if horse is favorited by current user",
+)
+async def is_favorite(
+    horse_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Favorite).where(
+            (Favorite.user_id == current_user.id) & (Favorite.horse_id == horse_id)
+        )
+    )
+    favorite = result.scalar_one_or_none()
+    
+    return {"is_favorite": favorite is not None}
     return None

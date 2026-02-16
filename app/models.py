@@ -39,6 +39,10 @@ class User(Base):
         Enum(UserRole), default=UserRole.BUYER, nullable=False
     )
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    verification_code: Mapped[str | None] = mapped_column(String(6), nullable=True)
+    verification_code_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -75,6 +79,8 @@ class UserProfile(Base):
         unique=True,
         nullable=False,
     )
+    first_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     phone_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
     location: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -100,6 +106,12 @@ class HorseGender(str, enum.Enum):
     MARE = "mare"
     GELDING = "gelding"
     STALLION = "stallion"
+
+
+class HorseStatus(str, enum.Enum):
+    PENDING_REVIEW = "pending_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
 
 
 class Horse(Base):
@@ -129,6 +141,10 @@ class Horse(Base):
     )
     vet_certificate_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20), default="pending_review", nullable=False, index=True
+    )
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -176,3 +192,31 @@ class HorseImage(Base):
 
     def __repr__(self) -> str:
         return f"<HorseImage {self.id} for Horse {self.horse_id}>"
+
+
+class Favorite(Base):
+    __tablename__ = "favorites"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    horse_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("horses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return f"<Favorite user_id={self.user_id} horse_id={self.horse_id}>"

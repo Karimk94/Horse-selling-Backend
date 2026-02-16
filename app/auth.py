@@ -38,6 +38,16 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
+def create_verification_token(email: str, expires_delta: timedelta | None = None) -> str:
+    """Create a signed JWT verification token (expires in 24 hours by default)."""
+    to_encode = {"sub": email, "type": "verification"}
+    expire = datetime.now(timezone.utc) + (
+        expires_delta or timedelta(hours=24)
+    )
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
 def verify_token(token: str) -> dict:
     """Decode and verify a JWT token. Raises HTTPException on failure."""
     credentials_exception = HTTPException(

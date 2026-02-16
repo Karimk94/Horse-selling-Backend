@@ -13,6 +13,16 @@ class SignupRequest(BaseModel):
     location: str | None = Field(None, max_length=255)
 
 
+class OTPRequest(BaseModel):
+    email: EmailStr
+
+
+class VerifyOTPRequest(BaseModel):
+    email: EmailStr
+    otp: str = Field(..., min_length=6, max_length=6)
+
+
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
@@ -26,6 +36,8 @@ class TokenResponse(BaseModel):
 
 
 class UserProfileResponse(BaseModel):
+    first_name: str | None = None
+    last_name: str | None = None
     phone_number: str | None
     location: str | None
 
@@ -44,6 +56,8 @@ class UserResponse(BaseModel):
 
 
 class UserProfileUpdate(BaseModel):
+    first_name: str | None = Field(None, max_length=100)
+    last_name: str | None = Field(None, max_length=100)
     phone_number: str | None = Field(None, max_length=20)
     location: str | None = Field(None, max_length=255)
     role: str | None = None  # Allow updating role
@@ -56,6 +70,8 @@ class UserRoleUpdate(BaseModel):
 class AdminUserUpdate(BaseModel):
     role: str | None = None
     is_verified: bool | None = None
+    first_name: str | None = Field(None, max_length=100)
+    last_name: str | None = Field(None, max_length=100)
     phone_number: str | None = Field(None, max_length=20)
     location: str | None = Field(None, max_length=255)
 
@@ -157,6 +173,8 @@ class HorseResponse(BaseModel):
     vet_check_available: bool
     vet_certificate_url: str | None
     image_url: str | None  # Deprecated: use images instead
+    status: str = "approved"  # pending_review, approved, rejected
+    rejection_reason: str | None = None
     created_at: datetime
     updated_at: datetime
     owner: HorseOwnerResponse | None = None
@@ -168,3 +186,27 @@ class HorseResponse(BaseModel):
 class HorseListResponse(BaseModel):
     total: int
     horses: list[HorseResponse]
+
+# ── Favorite Responses ────────────────────────────────────────────────────────
+
+class FavoriteResponse(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    horse_id: uuid.UUID
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AddFavoriteRequest(BaseModel):
+    horse_id: uuid.UUID
+
+
+# -- Admin Review Requests ----
+
+class AdminApproveListingRequest(BaseModel):
+    pass  # No additional fields needed for approval
+
+
+class AdminRejectListingRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500)
