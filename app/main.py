@@ -24,6 +24,11 @@ from app.schemas import (
     AdminRejectListingRequest,
     OTPRequest,
     VerifyOTPRequest,
+    VoucherCreateRequest,
+    VoucherUpdateRequest,
+    VoucherResponse,
+    VoucherValidateRequest,
+    VoucherValidateResponse,
 )
 from app.email_service import (
     send_pending_review_notification,
@@ -46,7 +51,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import engine, Base, get_db
-from app.models import User, UserProfile, Horse, HorseGender, UserRole, HorseImage, Favorite
+from app.models import User, UserProfile, Horse, HorseGender, UserRole, HorseImage, Favorite, Voucher, DiscountType
 from app.config import BASE_URL
 from app.schemas import (
     SignupRequest,
@@ -81,6 +86,7 @@ from app.auth import (
     verify_token,
     get_current_user,
     get_current_admin,
+    get_optional_current_user,
 )
 
 
@@ -154,6 +160,7 @@ async def signup(body: SignupRequest, db: AsyncSession = Depends(get_db)):
         password_hash=hash_password(body.password),
         role=UserRole(body.role),
         is_verified=False,  # Start as unverified
+        language=body.language,
     )
     db.add(user)
     await db.flush()  # populate user.id before creating profile
@@ -173,7 +180,7 @@ async def signup(body: SignupRequest, db: AsyncSession = Depends(get_db)):
     # Generate verification token and send email
     verification_token = create_verification_token(user.email)
     verification_link = f"{BASE_URL}/auth/verify-email?token={verification_token}"
-    send_verification_email(user.email, verification_token, verification_link)
+    send_verification_email(user.email, verification_token, verification_link, user.language)
 
     access_token = create_access_token(data={"sub": user.email})
     return TokenResponse(access_token=access_token)
@@ -289,7 +296,7 @@ async def send_otp(body: OTPRequest, db: AsyncSession = Depends(get_db)):
     await db.commit()
     
     # Send email
-    send_otp_email(user.email, otp)
+    send_otp_email(user.email, otp, user.language)
     
     return {"message": "OTP sent successfully"}
 
@@ -409,6 +416,9 @@ async def update_profile_endpoint(
         user.profile.phone_number = body.phone_number
     if body.location is not None:
         user.profile.location = body.location
+
+    if body.language is not None:
+        user.language = body.language
         
     await db.commit()
     
@@ -614,7 +624,7 @@ async def admin_approve_listing(
     
     # Send approval email to seller
     seller = horse.owner
-    send_listing_approved_email(seller.email, horse.title)
+    send_listing_approved_email(seller.email, horse.title, seller.language)
     
     return horse
 
@@ -657,7 +667,7 @@ async def admin_reject_listing(
     
     # Send rejection email to seller
     seller = horse.owner
-    send_listing_rejected_email(seller.email, horse.title, body.reason)
+    send_listing_rejected_email(seller.email, horse.title, body.reason, seller.language)
     
     return horse
 
@@ -681,6 +691,7 @@ async def list_horses(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(20, ge=1, le=100, description="Max records to return"),
     owner_id: Optional[uuid.UUID] = Query(None, description="Filter by owner ID"),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ):
     # Build base query
     query = select(Horse).options(
@@ -688,8 +699,28 @@ async def list_horses(
         selectinload(Horse.images)
     )
 
-    # Only show approved listings to public users
-    query = query.where(Horse.status == "approved")
+    # Determine visibility
+    # Default: Show only approved
+    # Exception: User is viewing their OWN listings (owner_id matches current_user.id)
+    # Exception: User is ADMIN (can see everything - optionally, but sticking to owner rule for "My Listings")
+    
+    show_all_statuses = False
+    
+    if current_user:
+        if current_user.role == UserRole.ADMIN:
+             # Admin can see all statuses if they want? 
+             # Usually Admin uses /admin/listings. 
+             # If Admin uses this endpoint, maybe they want to see what public sees?
+             # But let's allow Admin to see all if they filter by owner_id or just browsing?
+             # Let's stick to the requirement: "if the horse listing is rejected... kept in the list of admin... and inside should show the reason... as well as for the seller"
+             # So owner needs to see it.
+             pass
+        
+        if owner_id and owner_id == current_user.id:
+            show_all_statuses = True
+
+    if not show_all_statuses:
+        query = query.where(Horse.status == "approved")
 
     # Apply dynamic filters
     if owner_id is not None:
@@ -757,8 +788,19 @@ async def create_horse(
         vet_check_available=body.vet_check_available,
         vet_certificate_url=body.vet_certificate_url,
         image_url=image_urls[0] if image_urls else None,  # Primary image for backward compatibility
+        discount_type=DiscountType(body.discount_type) if body.discount_type else None,
+        discount_value=body.discount_value,
         status="pending_review",
     )
+    
+    # Calculate discount price
+    if horse.discount_type and horse.discount_value:
+        if horse.discount_type == DiscountType.PERCENTAGE:
+            horse.discount_price = horse.price * (1 - horse.discount_value / 100)
+        elif horse.discount_type == DiscountType.FIXED:
+             # Fixed means "New Reduced Price" as per user request
+            horse.discount_price = horse.discount_value
+    
     db.add(horse)
     await db.flush()  # Get horse.id before creating images
     
@@ -784,14 +826,55 @@ async def create_horse(
     )
     horse = result.scalar_one()
     
-    # Send notification to all admins about pending review
     admin_result = await db.execute(select(User).where(User.role == UserRole.ADMIN))
     admin_users = admin_result.scalars().all()
-    admin_emails = [admin.email for admin in admin_users]
+    # Create list of dicts with email and language
+    # We'll need to update the service to handle this structure
+    admins_data = [{"email": admin.email, "language": admin.language} for admin in admin_users]
     
-    if admin_emails:
-        send_pending_review_notification(admin_emails, horse.title, current_user.email)
+    if admins_data:
+        send_pending_review_notification(admins_data, horse.title, current_user.email)
     
+    return horse
+
+
+@app.get(
+    "/api/v1/horses/{horse_id}",
+    response_model=HorseResponse,
+    tags=["Horses"],
+    summary="Get a specific horse listing",
+)
+async def get_horse(
+    horse_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+):
+    # Fetch horse with images and owner profile
+    result = await db.execute(
+        select(Horse)
+        .where(Horse.id == horse_id)
+        .options(
+            selectinload(Horse.owner).selectinload(User.profile),
+            selectinload(Horse.images)
+        )
+    )
+    horse = result.scalar_one_or_none()
+    
+    if not horse:
+        raise HTTPException(status_code=404, detail="Listing not found")
+
+    # Visibility logic:
+    # If approved: Visible to everyone.
+    # If not approved: Visible only to Owner and Admin.
+    if horse.status != "approved":
+        is_owner = current_user and horse.owner_id == current_user.id
+        is_admin = current_user and current_user.role == UserRole.ADMIN
+        
+        if not (is_owner or is_admin):
+             # Return 404 to hide existence regarding non-public items, or 403?
+             # Usually 404 is safer for "hidden" items.
+             raise HTTPException(status_code=404, detail="Listing not found")
+
     return horse
 
 
@@ -847,6 +930,25 @@ async def update_horse(
     if body.vet_certificate_url is not None:
         horse.vet_certificate_url = body.vet_certificate_url
     
+    # Update discount fields
+    if body.discount_type is not None:
+        horse.discount_type = DiscountType(body.discount_type) if body.discount_type else None
+    if body.discount_value is not None:
+        horse.discount_value = body.discount_value
+        
+    # Recalculate discount price if any relevant field changed (price, type, value)
+    # We check if they are set on the object
+    if horse.discount_type and horse.discount_value:
+        if horse.discount_type == DiscountType.PERCENTAGE:
+            horse.discount_price = horse.price * (1 - horse.discount_value / 100)
+        elif horse.discount_type == DiscountType.FIXED:
+             # Fixed means "New Reduced Price" as per user request
+             # Ensure discount price is not higher than original? (Optional logic, but good practice)
+            horse.discount_price = horse.discount_value
+    else:
+        # If discount removed or incomplete
+        horse.discount_price = None
+
     # Handle image updates
     if body.image_urls is not None:
         # Delete existing images
@@ -1020,4 +1122,119 @@ async def is_favorite(
     favorite = result.scalar_one_or_none()
     
     return {"is_favorite": favorite is not None}
+
+
+# ── Voucher endpoints ─────────────────────────────────────────────────────────
+
+@app.post(
+    "/api/v1/vouchers",
+    response_model=VoucherResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Vouchers"],
+    summary="Create a voucher (Admin only)",
+)
+async def create_voucher(
+    body: VoucherCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    # Check uniqueness
+    result = await db.execute(select(Voucher).where(Voucher.code == body.code))
+    if result.scalar_one_or_none():
+         raise HTTPException(status_code=409, detail="Voucher code already exists")
+
+    voucher = Voucher(
+        code=body.code,
+        discount_type=DiscountType(body.discount_type),
+        discount_value=body.discount_value,
+        valid_from=body.valid_from,
+        valid_until=body.valid_until,
+        usage_limit=body.usage_limit,
+        is_active=body.is_active,
+    )
+    db.add(voucher)
+    await db.commit()
+    await db.refresh(voucher)
+    return voucher
+
+
+@app.get(
+    "/api/v1/vouchers",
+    response_model=list[VoucherResponse],
+    tags=["Vouchers"],
+    summary="List all vouchers (Admin only)",
+)
+async def list_vouchers(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    result = await db.execute(select(Voucher).order_by(Voucher.created_at.desc()))
+    return result.scalars().all()
+
+
+@app.post(
+    "/api/v1/vouchers/validate",
+    response_model=VoucherValidateResponse,
+    tags=["Vouchers"],
+    summary="Validate a voucher code",
+)
+async def validate_voucher(
+    body: VoucherValidateRequest,
+    db: AsyncSession = Depends(get_db),
+    # Optional: require login? User didn't specify, but usually yes. Let's allow public for now or assume user logic handles it.
+    # User said "validate if the voucher is valid... showing the user". 
+):
+    stmt = select(Voucher).where(Voucher.code == body.code)
+    result = await db.execute(stmt)
+    voucher = result.scalar_one_or_none()
+    
+    if not voucher:
+        return VoucherValidateResponse(valid=False, message="Invalid voucher code")
+        
+    if not voucher.is_active:
+         return VoucherValidateResponse(valid=False, message="Voucher is inactive")
+         
+    now = datetime.now(timezone.utc)
+    if voucher.valid_from and voucher.valid_from > now:
+         return VoucherValidateResponse(valid=False, message="Voucher is not yet active")
+         
+    if voucher.valid_until and voucher.valid_until < now:
+         return VoucherValidateResponse(valid=False, message="Voucher has expired")
+         
+    if voucher.usage_limit is not None and voucher.used_count >= voucher.usage_limit:
+         return VoucherValidateResponse(valid=False, message="Voucher usage limit reached")
+
+    # Calculate potential discount if price context provided
+    new_price = None
+    applied_discount_value = None
+    
+    if body.current_price is not None:
+        if voucher.discount_type == DiscountType.PERCENTAGE:
+            applied_discount_value = body.current_price * (voucher.discount_value / 100)
+            new_price = body.current_price - applied_discount_value
+        elif voucher.discount_type == DiscountType.FIXED:
+             # For voucher, fixed usually means "amount off" OR "fixed price"? 
+             # Usually vouchers are "amount off" (e.g. $10 off).
+             # Listing Discount was "Fixed Price" (override).
+             # Let's assume Voucher Fixed = Amount Off for now, as that's standard for checked out items.
+             # Wait, user said "voucher... apply the discount and showing the user... the discounted price".
+             # If I have a $1000 horse and $100 off voucher -> $900.
+             # If I have a $1000 horse and Fixed Price $500 voucher -> $500.
+             # "Discount" context usually implies "Off".
+             # But let's look at "Discount" logic I used for listings: "Fixed" = "New Reduced Price".
+             # For Vouchers, it's safer to assume "Fixed Amount Off" or "Percentage Off".
+             # If `discount_type` is shared Enum, `FIXED` might be ambiguous.
+             # Let's assume Fixed means "Amount Off" for Vouchers to be useful across different priced horses.
+             # AND Fixed means "New Price" for Listings (specific item override).
+             # Implementation:
+             applied_discount_value = voucher.discount_value
+             new_price = max(0, body.current_price - voucher.discount_value)
+
+    return VoucherValidateResponse(
+        valid=True,
+        message="Voucher Applied",
+        discount_type=voucher.discount_type,
+        discount_value=voucher.discount_value,
+        new_price=new_price
+    )
     return None

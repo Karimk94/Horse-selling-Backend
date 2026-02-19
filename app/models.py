@@ -38,6 +38,7 @@ class User(Base):
     role: Mapped[UserRole] = mapped_column(
         Enum(UserRole), default=UserRole.BUYER, nullable=False
     )
+    language: Mapped[str] = mapped_column(String(10), default="en", nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     verification_code: Mapped[str | None] = mapped_column(String(6), nullable=True)
     verification_code_expires_at: Mapped[datetime | None] = mapped_column(
@@ -114,6 +115,11 @@ class HorseStatus(str, enum.Enum):
     REJECTED = "rejected"
 
 
+class DiscountType(str, enum.Enum):
+    PERCENTAGE = "percentage"
+    FIXED = "fixed"
+
+
 class Horse(Base):
     __tablename__ = "horses"
 
@@ -140,6 +146,12 @@ class Horse(Base):
         Boolean, default=False, nullable=False
     )
     vet_certificate_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    
+    # Discount fields
+    discount_type: Mapped[DiscountType | None] = mapped_column(Enum(DiscountType), nullable=True)
+    discount_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    discount_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[str] = mapped_column(
         String(20), default="pending_review", nullable=False, index=True
@@ -220,3 +232,30 @@ class Favorite(Base):
 
     def __repr__(self) -> str:
         return f"<Favorite user_id={self.user_id} horse_id={self.horse_id}>"
+
+
+class Voucher(Base):
+    __tablename__ = "vouchers"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    code: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
+    discount_type: Mapped[DiscountType] = mapped_column(Enum(DiscountType), nullable=False)
+    discount_value: Mapped[float] = mapped_column(Float, nullable=False)
+    
+    valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    
+    usage_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    used_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    
+    def __repr__(self) -> str:
+        return f"<Voucher {self.code}>"

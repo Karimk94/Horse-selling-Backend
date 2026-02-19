@@ -67,6 +67,26 @@ def verify_token(token: str) -> dict:
 # ── FastAPI dependency: current user ──────────────────────────────────────────
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
+
+
+async def get_optional_current_user(
+    token: str | None = Depends(oauth2_scheme_optional),
+    db: AsyncSession = Depends(get_db),
+) -> User | None:
+    """Dependency that returns the authenticated User if token is valid, else None."""
+    if not token:
+        return None
+        
+    try:
+        payload = verify_token(token)
+        user_email: str = payload.get("sub")
+        result = await db.execute(select(User).where(User.email == user_email))
+        user = result.scalar_one_or_none()
+        return user
+    except (HTTPException, JWTError):
+        return None
+
 
 
 async def get_current_user(
