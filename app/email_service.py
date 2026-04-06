@@ -1,4 +1,7 @@
 import smtplib
+import json
+import urllib.request
+import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import List, Dict, Union
@@ -9,6 +12,9 @@ from app.config import (
     SMTP_PASSWORD,
     EMAIL_FROM,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def send_email(to_email: str, subject: str, html_content: str) -> bool:
@@ -280,6 +286,220 @@ def send_otp_email(user_email: str, otp_code: str, language: str = "en") -> bool
                 <p style="color: #666; font-size: 14px;">
                     If you did not request this verification, please ignore this email.
                 </p>
+            </body>
+        </html>
+        """
+
+    return send_email(user_email, subject, html_content)
+
+
+def send_saved_search_match_email(
+    user_email: str,
+    horse_title: str,
+    horse_breed: str,
+    horse_price: float,
+    search_name: str,
+    language: str = "en",
+) -> bool:
+    """Notify buyers when a newly approved horse matches one of their saved searches."""
+    is_rtl = language == "ar"
+    styles = get_common_styles(is_rtl)
+
+    if language == "ar":
+        subject = f"حصان جديد يطابق تنبيهك: {search_name}"
+        html_content = f"""
+        <html>
+            <body style="{styles} line-height: 1.6; color: #333;">
+                <h2>تم العثور على حصان يطابق بحثك المحفوظ</h2>
+                <p><strong>اسم التنبيه:</strong> {search_name}</p>
+                <p><strong>العنوان:</strong> {horse_title}</p>
+                <p><strong>السلالة:</strong> {horse_breed}</p>
+                <p><strong>السعر:</strong> ${horse_price:,.0f}</p>
+                <p>افتح التطبيق الآن لمشاهدة التفاصيل والتواصل مع البائع.</p>
+            </body>
+        </html>
+        """
+    else:
+        subject = f"New horse matches your alert: {search_name}"
+        html_content = f"""
+        <html>
+            <body style="{styles} line-height: 1.6; color: #333;">
+                <h2>We found a horse matching your saved search</h2>
+                <p><strong>Alert name:</strong> {search_name}</p>
+                <p><strong>Title:</strong> {horse_title}</p>
+                <p><strong>Breed:</strong> {horse_breed}</p>
+                <p><strong>Price:</strong> ${horse_price:,.0f}</p>
+                <p>Open the app to view full details and contact the seller.</p>
+            </body>
+        </html>
+        """
+
+    return send_email(user_email, subject, html_content)
+
+
+def send_expo_push_notifications_result(
+    tokens: list[str],
+    title: str,
+    body: str,
+    data: dict | None = None,
+    max_retries: int = 1,
+    timeout_seconds: int = 10,
+) -> dict:
+    """Send push notifications and return structured delivery result details."""
+    if not tokens:
+        return {
+            "total_tokens": 0,
+            "accepted_count": 0,
+            "failed_count": 0,
+            "status": "no_tokens",
+            "error_message": None,
+        }
+
+    payload = [
+        {
+            "to": token,
+            "title": title,
+            "body": body,
+            "sound": "default",
+            "data": data or {},
+        }
+        for token in tokens
+    ]
+
+    req = urllib.request.Request(
+        url="https://exp.host/--/api/v2/push/send",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+
+    attempts = max(1, max_retries + 1)
+    last_error: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
+                raw = response.read().decode("utf-8")
+                parsed = json.loads(raw)
+                if not isinstance(parsed, dict):
+                    logger.warning("Expo push returned non-dict response on attempt %s", attempt)
+                    return {
+                        "total_tokens": len(tokens),
+                        "accepted_count": 0,
+                        "failed_count": len(tokens),
+                        "status": "failed",
+                        "error_message": "Non-dict response payload",
+                    }
+                tickets = parsed.get("data", [])
+                if not isinstance(tickets, list):
+                    logger.warning("Expo push returned invalid tickets payload on attempt %s", attempt)
+                    return {
+                        "total_tokens": len(tokens),
+                        "accepted_count": 0,
+                        "failed_count": len(tokens),
+                        "status": "failed",
+                        "error_message": "Invalid ticket payload",
+                    }
+                accepted = sum(
+                    1
+                    for ticket in tickets
+                    if isinstance(ticket, dict) and ticket.get("status") == "ok"
+                )
+                total = len(tokens)
+                failed = max(total - accepted, 0)
+                if failed:
+                    logger.warning(
+                        "Expo push accepted %s tickets and reported %s failed tickets",
+                        accepted,
+                        failed,
+                    )
+                return {
+                    "total_tokens": total,
+                    "accepted_count": accepted,
+                    "failed_count": failed,
+                    "status": "success" if failed == 0 else "partial",
+                    "error_message": None,
+                }
+        except Exception as exc:
+            last_error = exc
+            if attempt < attempts:
+                logger.warning(
+                    "Expo push attempt %s/%s failed; retrying",
+                    attempt,
+                    attempts,
+                    exc_info=True,
+                )
+                continue
+            logger.error(
+                "Expo push failed after %s attempts",
+                attempts,
+                exc_info=True,
+            )
+
+    return {
+        "total_tokens": len(tokens),
+        "accepted_count": 0,
+        "failed_count": len(tokens),
+        "status": "failed",
+        "error_message": str(last_error) if last_error else "Unknown push error",
+    }
+
+
+def send_expo_push_notifications(
+    tokens: list[str],
+    title: str,
+    body: str,
+    data: dict | None = None,
+    max_retries: int = 1,
+    timeout_seconds: int = 10,
+) -> int:
+    """Send push notifications via Expo Push API and return number of accepted tickets."""
+    result = send_expo_push_notifications_result(
+        tokens=tokens,
+        title=title,
+        body=body,
+        data=data,
+        max_retries=max_retries,
+        timeout_seconds=timeout_seconds,
+    )
+    return int(result.get("accepted_count", 0))
+
+
+def send_offer_update_email(
+    user_email: str,
+    horse_title: str,
+    update_title: str,
+    update_message: str,
+    language: str = "en",
+) -> bool:
+    """Send a generic offer workflow update email (new offer, counter, accepted, rejected)."""
+    is_rtl = language == "ar"
+    styles = get_common_styles(is_rtl)
+
+    if language == "ar":
+        subject = f"تحديث عرض: {horse_title}"
+        html_content = f"""
+        <html>
+            <body style="{styles} line-height: 1.6; color: #333;">
+                <h2>{update_title}</h2>
+                <p><strong>الحصان:</strong> {horse_title}</p>
+                <p>{update_message}</p>
+                <p>افتح التطبيق لمراجعة العرض واتخاذ الإجراء المناسب.</p>
+            </body>
+        </html>
+        """
+    else:
+        subject = f"Offer update: {horse_title}"
+        html_content = f"""
+        <html>
+            <body style="{styles} line-height: 1.6; color: #333;">
+                <h2>{update_title}</h2>
+                <p><strong>Horse:</strong> {horse_title}</p>
+                <p>{update_message}</p>
+                <p>Open the app to review this offer and take action.</p>
             </body>
         </html>
         """
