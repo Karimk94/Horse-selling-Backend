@@ -1,20 +1,37 @@
-#Python
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
 venv/
-pycache/
-*.pyc
+env/
+ENV/
 *.pyo
 *.pyd
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# Database
+db.sqlite3
+*.sqlite3
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+*.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Project Specific
+/uploads
 /thumbnail_cache
 /video_cache
-__pycache__/
-*.pyc
-
-#Environment files
-.env
-
-#IDE and OS files
-.idea/
-.vscode/
-*.DS_Store
-*.xlsx
 /wheels/
+*.xlsx
