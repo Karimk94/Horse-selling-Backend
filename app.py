@@ -98,26 +98,6 @@ def logout():
     logging.info(f"User '{username}' logged out.")
     return jsonify({"message": "Logout successful"}), 200
 
-@app.route('/api/auth/pta-user', methods=['GET'])
-def get_user():
-    """
-    Generic user check. The frontend `page.tsx` uses this.
-    It relies on a different db_connector function, so we must include it.
-    """
-    user_session = session.get('user')
-    if user_session and 'username' in user_session:
-        user_details = db_connector.get_pta_user_details(user_session['username'])
-        if user_details:
-            session['user'] = user_details  # Update session
-            return jsonify({'user': user_details}), 200
-        else:
-            # User was in session but not in DB? Log them out.
-            session.pop('user', None)
-            session.pop('dst', None)
-            return jsonify({'error': 'User not found'}), 401
-    else:
-        return jsonify({'error': 'Not authenticated'}), 401
-
 # --- Archiving API Routes ---
 @app.route('/api/dashboard_counts', methods=['GET'])
 def get_dashboard_counts():
@@ -503,4 +483,10 @@ if __name__ == '__main__':
         hosted_app = app
 
     logging.info(f"Starting Archiving Backend on host 0.0.0.0 port {port}")
-    serve(hosted_app, host='0.0.0.0', port=port, threads=50)
+    serve(hosted_app, host='0.0.0.0', port=port,
+          threads=50,
+          channel_timeout=120,      # 120s before dropping idle connections
+          recv_bytes=65536,         # larger recv buffer for file uploads
+          connection_limit=200,     # max concurrent connections
+          cleanup_interval=10,      # clean up stale channels every 10s
+    )

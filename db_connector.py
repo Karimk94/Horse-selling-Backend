@@ -8,21 +8,53 @@ import wsdl_client
 
 load_dotenv()
 
-# --- Oracle Database Interaction ---
+# --- Oracle Database Connection Pool ---
+_pool = None
+
+
+def _get_pool():
+    """Lazily creates and returns the Oracle connection pool (created once, reused forever)."""
+    global _pool
+    if _pool is not None:
+        return _pool
+
+    dsn = f"{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_SERVICE_NAME')}"
+    user = os.getenv('DB_USERNAME')
+    password = os.getenv('DB_PASSWORD')
+    if not all([user, password, dsn]):
+        logging.error("Database connection details missing in environment variables.")
+        return None
+
+    logging.info(f"Creating Oracle connection pool (min=2, max=10) for {dsn}")
+    _pool = oracledb.create_pool(
+        user=user,
+        password=password,
+        dsn=dsn,
+        min=2,           # keep 2 warm connections ready
+        max=10,          # never open more than 10 simultaneous connections
+        increment=1,     # grow pool 1 connection at a time
+        timeout=30,      # close idle connections after 30s
+        wait_timeout=5000,  # wait max 5s for a free connection (ms)
+        getmode=oracledb.POOL_GETMODE_TIMEDWAIT,
+    )
+    return _pool
+
 
 def get_connection():
-    """Establishes a connection to the Oracle database."""
+    """Gets a connection from the pool (fast, ~1ms) instead of creating a new one (slow, ~100-500ms)."""
     try:
-        dsn = f"{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_SERVICE_NAME')}"
-        user = os.getenv('DB_USERNAME')
-        password = os.getenv('DB_PASSWORD')
-        if not all([user, password, dsn]):
-            logging.error("Database connection details missing in environment variables.")
+        pool = _get_pool()
+        if pool is None:
             return None
-        return oracledb.connect(user=user, password=password, dsn=dsn)
+        conn = pool.acquire()
+        conn.call_timeout = 30000  # 30s max per DB call — prevents infinite hang
+        return conn
     except oracledb.Error as ex:
         error, = ex.args
-        logging.error(f"DB connection error: {error.message} (Code: {error.code}, Context: {error.context})")
+        logging.error(f"DB pool connection error: {error.message} (Code: {error.code}, Context: {error.context})")
+        return None
+    except Exception as ex:
+        logging.error(f"DB pool connection error: {ex}")
         return None
 
 def get_app_id_from_extension(extension):
@@ -204,11 +236,38 @@ def fetch_archived_employees(page=1, page_size=20, search_term=None, status=None
     if not conn: return [], 0
     offset = (page - 1) * page_size
     employees, total_rows = [], 0
+
+    # Base query with LEFT JOINs for warrant and judicial card status.
+    # This eliminates the N+1 problem: 1 query instead of 1 + 2*N per page.
     base_query = """
         FROM LKP_PTA_EMP_ARCH arch
         JOIN lkp_hr_employees hr ON arch.EMPLOYEE_ID = hr.SYSTEM_ID
         LEFT JOIN LKP_PTA_EMP_STATUS stat ON arch.STATUS_ID = stat.SYSTEM_ID
     """
+
+    # Extended base for the fetch query — includes warrant/judicial card subqueries as LEFT JOINs
+    extended_base_query = """
+        FROM LKP_PTA_EMP_ARCH arch
+        JOIN lkp_hr_employees hr ON arch.EMPLOYEE_ID = hr.SYSTEM_ID
+        LEFT JOIN LKP_PTA_EMP_STATUS stat ON arch.STATUS_ID = stat.SYSTEM_ID
+        LEFT JOIN (
+            SELECT doc.PTA_EMP_ARCH_ID, MAX(doc.EXPIRY) as EXPIRY, COUNT(*) as DOC_COUNT
+            FROM LKP_PTA_EMP_DOCS doc
+            JOIN LKP_PTA_DOC_TYPES dt ON doc.DOC_TYPE_ID = dt.SYSTEM_ID
+            WHERE (TRIM(dt.NAME) LIKE '%Warrant Decisions%' OR TRIM(dt.NAME) LIKE '%القرارات الخاصة بالضبطية%')
+              AND doc.DISABLED = '0'
+            GROUP BY doc.PTA_EMP_ARCH_ID
+        ) warrant_doc ON warrant_doc.PTA_EMP_ARCH_ID = arch.SYSTEM_ID
+        LEFT JOIN (
+            SELECT doc.PTA_EMP_ARCH_ID, MAX(doc.EXPIRY) as EXPIRY, COUNT(*) as DOC_COUNT
+            FROM LKP_PTA_EMP_DOCS doc
+            JOIN LKP_PTA_DOC_TYPES dt ON doc.DOC_TYPE_ID = dt.SYSTEM_ID
+            WHERE (TRIM(dt.NAME) LIKE '%Judicial Card%' OR TRIM(dt.NAME) LIKE '%بطاقة الضبطية%')
+              AND doc.DISABLED = '0'
+            GROUP BY doc.PTA_EMP_ARCH_ID
+        ) judicial_doc ON judicial_doc.PTA_EMP_ARCH_ID = arch.SYSTEM_ID
+    """
+
     where_clauses, params = [], {}
     if search_term:
         where_clauses.append(
@@ -261,14 +320,26 @@ def fetch_archived_employees(page=1, page_size=20, search_term=None, status=None
     final_where_clause = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
     try:
         with conn.cursor() as cursor:
+            # Count query uses the simple base (no need for warrant/judicial JOINs)
             count_query = f"SELECT COUNT(DISTINCT arch.SYSTEM_ID) {base_query} {final_where_clause}"
             cursor.execute(count_query, params)
             total_rows = cursor.fetchone()[0]
 
+            # Fetch query uses the extended base with warrant/judicial LEFT JOINs
             fetch_query = f"""
-                            SELECT DISTINCT arch.SYSTEM_ID, TRIM(hr.FULLNAME_EN) as FULLNAME_EN, TRIM(hr.FULLNAME_AR) as FULLNAME_AR, TRIM(hr.EMPNO) as EMPNO, TRIM(hr.DEPARTEMENT) as DEPARTMENT, TRIM(hr.SECTION) as SECTION,
-                                   TRIM(stat.NAME_ENGLISH) as STATUS_EN, TRIM(stat.NAME_ARABIC) as STATUS_AR
-                            {base_query} {final_where_clause} ORDER BY arch.SYSTEM_ID DESC
+                            SELECT DISTINCT arch.SYSTEM_ID,
+                                   TRIM(hr.FULLNAME_EN) as FULLNAME_EN,
+                                   TRIM(hr.FULLNAME_AR) as FULLNAME_AR,
+                                   TRIM(hr.EMPNO) as EMPNO,
+                                   TRIM(hr.DEPARTEMENT) as DEPARTMENT,
+                                   TRIM(hr.SECTION) as SECTION,
+                                   TRIM(stat.NAME_ENGLISH) as STATUS_EN,
+                                   TRIM(stat.NAME_ARABIC) as STATUS_AR,
+                                   warrant_doc.EXPIRY as WARRANT_EXPIRY,
+                                   warrant_doc.DOC_COUNT as WARRANT_COUNT,
+                                   judicial_doc.EXPIRY as JUDICIAL_EXPIRY,
+                                   judicial_doc.DOC_COUNT as JUDICIAL_COUNT
+                            {extended_base_query} {final_where_clause} ORDER BY arch.SYSTEM_ID DESC
                         """
 
             if page_size > 0:
@@ -285,23 +356,13 @@ def fetch_archived_employees(page=1, page_size=20, search_term=None, status=None
             for row in cursor.fetchall():
                 emp = dict(zip(columns, row))
 
-                # Get status of the Warrant Decision document
-                cursor.execute("""
-                               SELECT doc.EXPIRY
-                               FROM LKP_PTA_EMP_DOCS doc
-                                        JOIN LKP_PTA_DOC_TYPES dt ON doc.DOC_TYPE_ID = dt.SYSTEM_ID
-                               WHERE doc.PTA_EMP_ARCH_ID = :1 
-                      AND (TRIM(dt.NAME) LIKE '%Warrant Decisions%' OR TRIM(dt.NAME) LIKE '%القرارات الخاصة بالضبطية%') 
-                      AND doc.DISABLED = '0'
-                               ORDER BY doc.EXPIRY DESC
-                                   FETCH FIRST 1 ROWS ONLY
-                               """, [emp['system_id']])
-                warrant_decision_doc = cursor.fetchone()
-
-                if warrant_decision_doc:
-                    expiry_date = warrant_decision_doc[0]
-                    if expiry_date:
-                        if expiry_date >= datetime.now().date():
+                # --- Derive Warrant Decision status from the JOIN result ---
+                warrant_expiry = emp.pop('warrant_expiry', None)
+                warrant_count = emp.pop('warrant_count', None) or 0
+                if warrant_count > 0:
+                    # Document exists
+                    if warrant_expiry is not None:
+                        if warrant_expiry >= datetime.now().date():
                             emp['warrant_status'] = 'فعالة / Active'
                         else:
                             emp['warrant_status'] = 'منتهية / Expired'
@@ -310,33 +371,23 @@ def fetch_archived_employees(page=1, page_size=20, search_term=None, status=None
                 else:
                     emp['warrant_status'] = 'لا توجد / No'
 
-                # Get status of the Judicial Card document
-                cursor.execute("""
-                               SELECT doc.EXPIRY
-                               FROM LKP_PTA_EMP_DOCS doc
-                                        JOIN LKP_PTA_DOC_TYPES dt ON doc.DOC_TYPE_ID = dt.SYSTEM_ID
-                               WHERE doc.PTA_EMP_ARCH_ID = :1 
-                      AND (TRIM(dt.NAME) LIKE '%Judicial Card%' OR TRIM(dt.NAME) LIKE '%بطاقة الضبطية%') 
-                      AND doc.DISABLED = '0'
-                               ORDER BY doc.EXPIRY DESC
-                                   FETCH FIRST 1 ROWS ONLY
-                               """, [emp['system_id']])
-                judicial_card = cursor.fetchone()
-
-                if judicial_card:
+                # --- Derive Judicial Card status from the JOIN result ---
+                judicial_expiry = emp.pop('judicial_expiry', None)
+                judicial_count = emp.pop('judicial_count', None) or 0
+                if judicial_count > 0:
+                    # Document exists
                     emp['card_status'] = 'توجد / Yes'
-                    expiry_date = judicial_card[0]
-                    if expiry_date:
-                        emp['card_expiry'] = expiry_date.strftime('%Y-%m-%d')
-                        if expiry_date < datetime.now():
+                    if judicial_expiry is not None:
+                        emp['card_expiry'] = judicial_expiry.strftime('%Y-%m-%d')
+                        if judicial_expiry < datetime.now():
                             emp['card_status_class'] = 'expired'
-                        elif expiry_date < datetime.now() + timedelta(days=30):
+                        elif judicial_expiry < datetime.now() + timedelta(days=30):
                             emp['card_status_class'] = 'expiring-soon'
                         else:
                             emp['card_status_class'] = 'valid'
                     else:
                         emp['card_expiry'] = 'N/A'
-                        emp['card_status_class'] = 'valid'  # No expiry date, assume valid
+                        emp['card_status_class'] = 'valid'  # Exists but no expiry, assume valid
                 else:
                     emp['card_status'] = 'لا توجد / No'
                     emp['card_expiry'] = 'N/A'

@@ -5,3 +5,4 @@ zeep
 flask-cors
 waitress
 openpyxl
+requests

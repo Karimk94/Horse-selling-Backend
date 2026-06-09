@@ -1,8 +1,11 @@
 import zeep
 import os
 import logging
+import threading
 from zeep import Client, Settings, xsd
 from zeep.exceptions import Fault
+from zeep.transports import Transport
+from requests import Session
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -11,18 +14,65 @@ WSDL_URL = os.getenv("WSDL_URL")
 DMS_USER = os.getenv("DMS_USER")
 DMS_PASSWORD = os.getenv("DMS_PASSWORD")
 
+# --- Timeout Configuration (seconds) ---
+_WSDL_LOAD_TIMEOUT = int(os.getenv("WSDL_LOAD_TIMEOUT_SECONDS", "10"))
+_WSDL_OP_TIMEOUT = int(os.getenv("WSDL_OPERATION_TIMEOUT_SECONDS", "30"))
+
+# --- Cached SOAP Clients (parsed once, reused forever) ---
+_settings = Settings(strict=False, xml_huge_tree=True)
+_init_lock = threading.Lock()
+_default_client = None
+_svc_client = None
+_obj_client = None
+
+
+def _make_transport():
+    """Create a zeep Transport with proper timeouts so no call hangs forever."""
+    http_session = Session()
+    http_session.timeout = (_WSDL_LOAD_TIMEOUT, _WSDL_OP_TIMEOUT)  # (connect, read)
+    return Transport(session=http_session, timeout=_WSDL_OP_TIMEOUT)
+
+
+def _get_clients():
+    """
+    Lazy-init and cache SOAP clients. The WSDL is fetched and parsed only once.
+    Thread-safe via a lock so concurrent first-requests don't duplicate work.
+    Returns (default_client, svc_client, obj_client).
+    """
+    global _default_client, _svc_client, _obj_client
+    if _default_client is not None:
+        return _default_client, _svc_client, _obj_client
+
+    with _init_lock:
+        # Double-check after acquiring lock
+        if _default_client is not None:
+            return _default_client, _svc_client, _obj_client
+
+        if not WSDL_URL:
+            raise ValueError("WSDL_URL is not set in the environment file.")
+
+        transport = _make_transport()
+        logging.info(f"Initializing SOAP clients from WSDL: {WSDL_URL} "
+                     f"(load_timeout={_WSDL_LOAD_TIMEOUT}s, op_timeout={_WSDL_OP_TIMEOUT}s)")
+
+        _default_client = Client(WSDL_URL, settings=_settings, transport=transport)
+        _svc_client = Client(WSDL_URL, port_name='BasicHttpBinding_IDMSvc',
+                             settings=_settings, transport=transport)
+        _obj_client = Client(WSDL_URL, port_name='BasicHttpBinding_IDMObj',
+                             settings=_settings, transport=transport)
+
+        logging.info("SOAP clients initialized successfully.")
+        return _default_client, _svc_client, _obj_client
+
 
 # --- System Login (for background tasks) ---
 def dms_system_login():
     """Logs into the DMS SOAP service using system credentials from .env and returns a session token (DST)."""
     try:
-        if not WSDL_URL:
-            raise ValueError("WSDL_URL is not set in the environment file.")
         if not DMS_USER or not DMS_PASSWORD:
             raise ValueError("DMS_USER or DMS_PASSWORD not set in environment file.")
 
-        settings = Settings(strict=False, xml_huge_tree=True)
-        client = Client(WSDL_URL, settings=settings)
+        client, _, _ = _get_clients()
 
         login_info_type = client.get_type(
             '{http://schemas.datacontract.org/2004/07/OpenText.DMSvr.Serializable}DMSvrLoginInfo')
@@ -51,10 +101,8 @@ def dms_system_login():
 def dms_user_login(username, password):
     """Logs into the DMS SOAP service with user-provided credentials and returns a session token (DST)."""
     try:
-        if not WSDL_URL:
-            raise ValueError("WSDL_URL is not set in the environment file.")
-        settings = Settings(strict=False, xml_huge_tree=True)
-        client = Client(WSDL_URL, settings=settings)
+        client, _, _ = _get_clients()
+
         login_info_type = client.get_type(
             '{http://schemas.datacontract.org/2004/07/OpenText.DMSvr.Serializable}DMSvrLoginInfo')
         login_info_instance = login_info_type(network=0, loginContext='RTA_MAIN', username=username,
@@ -80,15 +128,10 @@ def upload_archive_document_to_dms(dst, file_stream, metadata):
     Uploads a document to the DMS for the archiving system.
     'metadata' must contain 'docname', 'abstract', 'filename', 'dms_user', 'app_id'.
     """
-    svc_client, obj_client = None, None
     created_doc_number, version_id, put_doc_id, stream_id = None, None, None, None
     try:
-        if not WSDL_URL:
-            raise ValueError("WSDL_URL is not set in the environment file.")
+        _, svc_client, obj_client = _get_clients()
 
-        settings = Settings(strict=False, xml_huge_tree=True)
-        svc_client = Client(WSDL_URL, port_name='BasicHttpBinding_IDMSvc', settings=settings)
-        obj_client = Client(WSDL_URL, port_name='BasicHttpBinding_IDMObj', settings=settings)
         string_type = svc_client.get_type('{http://www.w3.org/2001/XMLSchema}string')
         int_type = svc_client.get_type('{http://www.w3.org/2001/XMLSchema}int')
         string_array_type = svc_client.get_type(
@@ -186,15 +229,16 @@ def upload_archive_document_to_dms(dst, file_stream, metadata):
                 logging.error(f"Failed to delete orphaned profile: {delete_e}")
         return None
     finally:
-        if obj_client:
+        _, _, obj_client_ref = _get_clients()
+        if obj_client_ref:
             if put_doc_id:
                 try:
-                    obj_client.service.ReleaseObject(call={'objectID': put_doc_id})
+                    obj_client_ref.service.ReleaseObject(call={'objectID': put_doc_id})
                 except Exception:
                     pass
             if stream_id:
                 try:
-                    obj_client.service.ReleaseObject(call={'objectID': stream_id})
+                    obj_client_ref.service.ReleaseObject(call={'objectID': stream_id})
                 except Exception:
                     pass
 
@@ -202,14 +246,9 @@ def get_document_from_dms(dst, doc_number):
     """
     Retrieves a document's content and filename from DMS for the archiving system.
     """
-    svc_client, obj_client, content_id, stream_id = None, None, None, None
+    content_id, stream_id = None, None
     try:
-        if not WSDL_URL:
-            raise ValueError("WSDL_URL is not set in the environment file.")
-
-        settings = Settings(strict=False, xml_huge_tree=True)
-        svc_client = Client(WSDL_URL, port_name='BasicHttpBinding_IDMSvc', settings=settings)
-        obj_client = Client(WSDL_URL, port_name='BasicHttpBinding_IDMObj', settings=settings)
+        _, svc_client, obj_client = _get_clients()
 
         get_doc_call = {
             'call': {
@@ -259,14 +298,15 @@ def get_document_from_dms(dst, doc_number):
         logging.error(f"DMS document retrieval failed for doc {doc_number}: {e}", exc_info=True)
         return None, None
     finally:
-        if obj_client:
+        _, _, obj_client_ref = _get_clients()
+        if obj_client_ref:
             if stream_id:
                 try:
-                    obj_client.service.ReleaseObject(call={'objectID': stream_id})
+                    obj_client_ref.service.ReleaseObject(call={'objectID': stream_id})
                 except Exception:
                     pass
             if content_id:
                 try:
-                    obj_client.service.ReleaseObject(call={'objectID': content_id})
+                    obj_client_ref.service.ReleaseObject(call={'objectID': content_id})
                 except Exception:
                     pass
