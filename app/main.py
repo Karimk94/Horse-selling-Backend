@@ -496,10 +496,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    """Log all incoming requests with method, path, and response status."""
+    import time
+    start_time = time.time()
+    response = await call_next(request)
+    duration_ms = (time.time() - start_time) * 1000
+    logger.info(
+        f"{request.method} {request.url.path} -> {response.status_code} ({duration_ms:.1f}ms)"
+    )
+    return response
+
 from fastapi.staticfiles import StaticFiles
 from app.config import UPLOAD_DIR
 
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
+
+@app.get(
+    "/health/",
+    tags=["System"],
+    summary="Health check endpoint",
+)
+async def health_check():
+    """Returns service health status."""
+    return {"status": "healthy", "service": "horse-marketplace-api"}
 
 # ── Include routers ───────────────────────────────────────────────────────────
 from app.media import router as media_router  # noqa: E402
