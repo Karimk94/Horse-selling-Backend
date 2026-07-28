@@ -1,14 +1,12 @@
-
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
-
-# Virtual Environment
 venv/
 env/
 ENV/
-/uploads
+*.pyo
+*.pyd
 
 # Environment Variables
 .env
@@ -24,8 +22,16 @@ db.sqlite3
 
 # OS
 .DS_Store
+*.DS_Store
 Thumbs.db
 
 # IDE
 .vscode/
 .idea/
+
+# Project Specific
+/uploads
+/thumbnail_cache
+/video_cache
+/wheels/
+*.xlsx

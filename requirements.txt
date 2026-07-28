@@ -1,3 +1,10 @@
+Flask
+oracledb
+zeep
+flask-cors
+waitress
+openpyxl
+requests
 fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 sqlalchemy[asyncio]>=2.0.25
@@ -12,4 +19,3 @@ email-validator
 python-multipart
 slowapi>=0.1.9
 apscheduler>=3.10.0
-
