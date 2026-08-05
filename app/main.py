@@ -1,6 +1,7 @@
 import random
 import string
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 import uuid
 import json
@@ -511,6 +512,13 @@ async def request_logging_middleware(request: Request, call_next):
 
 from fastapi.staticfiles import StaticFiles
 from app.config import UPLOAD_DIR
+
+# Ensure uploads directory exists at runtime so StaticFiles can mount it.
+try:
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+except Exception:
+    # If directory cannot be created, log a warning but allow app to start
+    logger.warning("Could not create uploads directory: %s", UPLOAD_DIR)
 
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 

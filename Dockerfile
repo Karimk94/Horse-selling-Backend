@@ -13,6 +13,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
+# Ensure uploads directory exists in the image so StaticFiles can mount it
+RUN mkdir -p /app/uploads
+
 COPY . .
 
 # Expose port
