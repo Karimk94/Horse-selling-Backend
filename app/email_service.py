@@ -17,7 +17,12 @@ from app.config import (
 logger = logging.getLogger(__name__)
 
 
-def send_email(to_email: str, subject: str, html_content: str) -> bool:
+def send_email(
+    to_email: str,
+    subject: str,
+    html_content: str,
+    timeout_seconds: int = 10,
+) -> bool:
     """
     Send an email using SMTP.
     
@@ -25,6 +30,7 @@ def send_email(to_email: str, subject: str, html_content: str) -> bool:
         to_email: Recipient email address
         subject: Email subject
         html_content: HTML content of the email
+        timeout_seconds: Socket timeout for SMTP operations in seconds.
     
     Returns:
         bool: True if email sent successfully, False otherwise
@@ -39,14 +45,14 @@ def send_email(to_email: str, subject: str, html_content: str) -> bool:
         html_part = MIMEText(html_content, "html")
         msg.attach(html_part)
 
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=timeout_seconds) as server:
             server.starttls()
             server.login(SMTP_USER, SMTP_PASSWORD)
             server.sendmail(EMAIL_FROM, to_email, msg.as_string())
 
         return True
-    except Exception as e:
-        print(f"Error sending email to {to_email}: {str(e)}")
+    except Exception:
+        logger.exception("Error sending email to %s", to_email)
         return False
 
 

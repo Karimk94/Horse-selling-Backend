@@ -2,6 +2,7 @@ import random
 import string
 import logging
 import os
+import asyncio
 from datetime import datetime, timedelta, timezone
 import uuid
 import json
@@ -606,6 +607,36 @@ async def signup(request: Request, body: SignupRequest, db: AsyncSession = Depen
             detail="Account created, but verification email could not be sent",
         )
 
+    try:
+        email_sent = await asyncio.wait_for(
+            asyncio.to_thread(
+                send_verification_email,
+                user.email,
+                verification_token,
+                verification_link,
+                user.language,
+            ),
+            timeout=10,
+        )
+    except asyncio.TimeoutError:
+        logger.exception("Verification email sending timed out for %s", user.email)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Account created, but verification email delivery timed out.",
+        )
+    except Exception:
+        logger.exception("Failed to send verification email for %s", user.email)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Account created, but verification email could not be sent",
+        )
+
+    if not email_sent:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Account created, but verification email could not be sent",
+        )
+
     access_token = create_access_token(data={"sub": user.email})
     return TokenResponse(access_token=access_token)
 
@@ -721,14 +752,31 @@ async def send_otp(request: Request, body: OTPRequest, db: AsyncSession = Depend
     
     await db.commit()
     
-    # Send email (plain otp — never stored)
-    email_sent = send_otp_email(user.email, otp, user.language)
+    # Send email without blocking the async event loop.
+    try:
+        email_sent = await asyncio.wait_for(
+            asyncio.to_thread(send_otp_email, user.email, otp, user.language),
+            timeout=10,
+        )
+    except asyncio.TimeoutError:
+        logger.exception("OTP email sending timed out for %s", user.email)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not send OTP email in time. Please try again.",
+        )
+    except Exception:
+        logger.exception("Failed to send OTP email for %s", user.email)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not send OTP email. Please check SMTP configuration.",
+        )
+
     if not email_sent:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not send OTP email. Please check SMTP configuration.",
         )
-    
+
     return {"message": "OTP sent successfully"}
 
 

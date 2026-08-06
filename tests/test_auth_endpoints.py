@@ -356,7 +356,7 @@ async def test_send_otp_success(client, monkeypatch):
     response = await client.post("/auth/send-otp", json={"email": "otp@example.com"})
 
     assert response.status_code == 200
-    assert user.verification_code == "123456"
+    assert main_module.verify_password("123456", user.verification_code)
 
 
 @pytest.mark.asyncio
@@ -392,7 +392,7 @@ async def test_send_otp_email_failure_returns_500(client, monkeypatch):
 @pytest.mark.asyncio
 async def test_verify_otp_success_marks_verified(client):
     user = make_user("otpv@example.com", verified=False)
-    user.verification_code = "123456"
+    user.verification_code = main_module.hash_password("123456")
     user.verification_code_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
 
     fake_db = FakeDB([FakeResult(scalar_value=user)])
@@ -431,7 +431,7 @@ async def test_verify_otp_user_not_found_returns_404(client):
 @pytest.mark.asyncio
 async def test_verify_otp_invalid_code_returns_400(client):
     user = make_user("otpbad@example.com", verified=False)
-    user.verification_code = "123456"
+    user.verification_code = main_module.hash_password("123456")
     user.verification_code_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
 
     fake_db = FakeDB([FakeResult(scalar_value=user)])
@@ -491,7 +491,7 @@ async def test_verify_otp_no_request_returns_400(client):
 @pytest.mark.asyncio
 async def test_verify_otp_expired_returns_400(client):
     user = make_user("otpexp@example.com", verified=False)
-    user.verification_code = "123456"
+    user.verification_code = main_module.hash_password("123456")
     user.verification_code_expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
     fake_db = FakeDB([FakeResult(scalar_value=user)])
 
