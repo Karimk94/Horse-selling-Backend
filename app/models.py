@@ -49,7 +49,7 @@ class User(Base):
     )
     language: Mapped[str] = mapped_column(String(10), default="en", nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    verification_code: Mapped[str | None] = mapped_column(String(6), nullable=True)
+    verification_code: Mapped[str | None] = mapped_column(String(255), nullable=True)
     verification_code_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
