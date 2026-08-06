@@ -3,11 +3,34 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL: str = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://postgres:password@localhost:5432/horse_marketplace",
+
+def _normalize_database_url(url: str | None) -> str | None:
+    if url is None:
+        return None
+    normalized = url.strip().replace('\n', '').replace('\r', '').strip()
+    if normalized.startswith('postgres://'):
+        normalized = normalized.replace('postgres://', 'postgresql+asyncpg://', 1)
+    elif normalized.startswith('postgresql://') and '+asyncpg' not in normalized:
+        normalized = normalized.replace('postgresql://', 'postgresql+asyncpg://', 1)
+    return normalized
+
+DATABASE_URL: str | None = _normalize_database_url(
+    os.getenv('DATABASE_URL')
 )
-TEST_DATABASE_URL: str | None = os.getenv("TEST_DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError(
+        'DATABASE_URL is not configured. Set DATABASE_URL in Railway env to a valid Postgres connection URL.'
+    )
+
+if os.getenv('RAILWAY_ENVIRONMENT', 'development') == 'production':
+    lower_db = DATABASE_URL.lower()
+    if 'localhost' in lower_db or '127.0.0.1' in lower_db:
+        raise RuntimeError(
+            'DATABASE_URL points to localhost; this will not work in Railway production. '
+            'Use Railway managed PostgreSQL and set the DATABASE_URL env var to the plugin-provided value.'
+        )
+
+TEST_DATABASE_URL: str | None = _normalize_database_url(os.getenv('TEST_DATABASE_URL'))
 AUTO_CREATE_SCHEMA: bool = os.getenv("AUTO_CREATE_SCHEMA", "false").lower() == "true"
 SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me-to-a-random-secret-key")
 ALGORITHM: str = os.getenv("ALGORITHM", "HS256")

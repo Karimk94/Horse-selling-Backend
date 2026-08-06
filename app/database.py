@@ -3,7 +3,14 @@ from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
 from app.config import DATABASE_URL
 
-engine = create_async_engine(DATABASE_URL, echo=False, future=True)
+try:
+    engine = create_async_engine(DATABASE_URL, echo=False, future=True)
+except ModuleNotFoundError as exc:
+    raise RuntimeError(
+        'Database driver missing or DATABASE_URL uses the wrong dialect. '
+        'Ensure DATABASE_URL is set to a valid postgres asyncpg URL (postgresql+asyncpg://...) '
+        'and that asyncpg is installed in requirements.'
+    ) from exc
 
 async_session = sessionmaker(
     bind=engine,
