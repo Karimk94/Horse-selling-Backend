@@ -6,6 +6,7 @@ import threading
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import List, Dict, Union
+import requests
 from app.config import (
     EMAIL_BACKEND,
     SMTP_SERVER,
@@ -13,6 +14,9 @@ from app.config import (
     SMTP_USER,
     SMTP_PASSWORD,
     EMAIL_FROM,
+    SENDGRID_API_KEY,
+    MAILGUN_API_KEY,
+    MAILGUN_DOMAIN,
 )
 
 _email_failure_count = 0
@@ -32,6 +36,154 @@ def get_email_failure_count() -> int:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _send_email_with_sendgrid(
+    to_email: str,
+    subject: str,
+    html_content: str,
+    timeout_seconds: int = 10,
+) -> bool:
+    if not SENDGRID_API_KEY:
+        logger.warning(
+            "SENDGRID_API_KEY is not configured, skipping SendGrid email delivery."
+        )
+        return False
+
+    payload = {
+        "personalizations": [{"to": [{"email": to_email}]}],
+        "from": {"email": EMAIL_FROM},
+        "subject": subject,
+        "content": [{"type": "text/html", "value": html_content}],
+    }
+    headers = {
+        "Authorization": f"Bearer {SENDGRID_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = requests.post(
+            "https://api.sendgrid.com/v3/mail/send",
+            json=payload,
+            headers=headers,
+            timeout=timeout_seconds,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"SendGrid error {response.status_code}: {response.text}"
+            )
+        return True
+    except Exception as exc:
+        increment_email_failure_count()
+        logger.warning("SendGrid email delivery failed for %s: %s", to_email, exc)
+        return False
+
+
+def _send_email_with_mailgun(
+    to_email: str,
+    subject: str,
+    html_content: str,
+    timeout_seconds: int = 10,
+) -> bool:
+    if not MAILGUN_API_KEY or not MAILGUN_DOMAIN:
+        logger.warning(
+            "MAILGUN_API_KEY or MAILGUN_DOMAIN is not configured, skipping Mailgun email delivery."
+        )
+        return False
+
+    auth = ("api", MAILGUN_API_KEY)
+    data = {
+        "from": EMAIL_FROM,
+        "to": to_email,
+        "subject": subject,
+        "html": html_content,
+    }
+
+    try:
+        response = requests.post(
+            f"https://api.mailgun.net/v3/{MAILGUN_DOMAIN}/messages",
+            auth=auth,
+            data=data,
+            timeout=timeout_seconds,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"Mailgun error {response.status_code}: {response.text}"
+            )
+        return True
+    except Exception as exc:
+        increment_email_failure_count()
+        logger.warning("Mailgun email delivery failed for %s: %s", to_email, exc)
+        return False
+
+
+def _send_email_with_smtp(
+    to_email: str,
+    subject: str,
+    html_content: str,
+    timeout_seconds: int = 10,
+) -> bool:
+    if not SMTP_SERVER:
+        logger.warning("SMTP_SERVER is not configured, skipping email delivery.")
+        return False
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = EMAIL_FROM
+        msg["To"] = to_email
+
+        html_part = MIMEText(html_content, "html")
+        msg.attach(html_part)
+
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=timeout_seconds) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(EMAIL_FROM, to_email, msg.as_string())
+
+        return True
+    except Exception as exc:
+        increment_email_failure_count()
+        logger.warning("SMTP email delivery failed for %s: %s", to_email, exc)
+        return False
+
+
+def _send_email_with_resend(
+    to_email: str,
+    subject: str,
+    html_content: str,
+    timeout_seconds: int = 10,
+) -> bool:
+    if not RESEND_API_KEY:
+        logger.warning(
+            "RESEND_API_KEY is not configured, skipping Resend email delivery."
+        )
+        return False
+
+    smtp_server = SMTP_SERVER or "smtp.resend.com"
+    smtp_port = SMTP_PORT or 587
+    smtp_user = SMTP_USER or "apikey"
+    smtp_password = SMTP_PASSWORD or RESEND_API_KEY
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = EMAIL_FROM
+        msg["To"] = to_email
+
+        html_part = MIMEText(html_content, "html")
+        msg.attach(html_part)
+
+        with smtplib.SMTP(smtp_server, smtp_port, timeout=timeout_seconds) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.sendmail(EMAIL_FROM, to_email, msg.as_string())
+
+        return True
+    except Exception as exc:
+        increment_email_failure_count()
+        logger.warning("Resend SMTP email delivery failed for %s: %s", to_email, exc)
+        return False
 
 
 def send_email(
@@ -61,37 +213,31 @@ def send_email(
         )
         return True
 
-    if EMAIL_BACKEND != "smtp":
-        logger.warning(
-            "Email backend %s is not supported. Set EMAIL_BACKEND=smtp or console.",
-            EMAIL_BACKEND,
+    if EMAIL_BACKEND == "resend":
+        return _send_email_with_resend(
+            to_email, subject, html_content, timeout_seconds
         )
-        return False
 
-    if not SMTP_SERVER:
-        logger.warning("SMTP_SERVER is not configured, skipping email delivery.")
-        return False
+    if EMAIL_BACKEND == "sendgrid":
+        return _send_email_with_sendgrid(
+            to_email, subject, html_content, timeout_seconds
+        )
 
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = EMAIL_FROM
-        msg["To"] = to_email
+    if EMAIL_BACKEND == "mailgun":
+        return _send_email_with_mailgun(
+            to_email, subject, html_content, timeout_seconds
+        )
 
-        # Attach HTML part
-        html_part = MIMEText(html_content, "html")
-        msg.attach(html_part)
+    if EMAIL_BACKEND == "smtp":
+        return _send_email_with_smtp(
+            to_email, subject, html_content, timeout_seconds
+        )
 
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=timeout_seconds) as server:
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(EMAIL_FROM, to_email, msg.as_string())
-
-        return True
-    except Exception as exc:
-        increment_email_failure_count()
-        logger.warning("Email delivery failed for %s: %s", to_email, exc)
-        return False
+    logger.warning(
+        "Email backend %s is not supported. Set EMAIL_BACKEND=smtp, resend, sendgrid, mailgun, or console.",
+        EMAIL_BACKEND,
+    )
+    return False
 
 
 def get_common_styles(is_rtl: bool = False) -> str:

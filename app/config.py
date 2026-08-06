@@ -49,6 +49,10 @@ SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER: str = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
 EMAIL_FROM: str = os.getenv("EMAIL_FROM", "noreply@horsemarketplace.com")
+SENDGRID_API_KEY: str = os.getenv("SENDGRID_API_KEY", "")
+MAILGUN_API_KEY: str = os.getenv("MAILGUN_API_KEY", "")
+MAILGUN_DOMAIN: str = os.getenv("MAILGUN_DOMAIN", "")
+RESEND_API_KEY: str = os.getenv("RESEND_API_KEY", "")
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
 # Comma-separated list of allowed origins, e.g.
