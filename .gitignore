@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.venv/
 venv/
 env/
 ENV/
@@ -12,6 +13,12 @@ ENV/
 .env
 .env.local
 .env.*.local
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
 
 # Database
 db.sqlite3
@@ -35,3 +42,8 @@ Thumbs.db
 /video_cache
 /wheels/
 *.xlsx
+
+# Temporary/Accidental Files
+_
+*.tmp
+*.bak
