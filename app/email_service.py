@@ -17,6 +17,7 @@ from app.config import (
     SENDGRID_API_KEY,
     MAILGUN_API_KEY,
     MAILGUN_DOMAIN,
+    RESEND_API_KEY,
 )
 
 _email_failure_count = 0
