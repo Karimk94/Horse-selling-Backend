@@ -10,7 +10,7 @@ import json
 from contextlib import asynccontextmanager
 from typing import Optional, Annotated
 
-from fastapi import FastAPI, Depends, Header, HTTPException, Query, Request, status
+from fastapi import FastAPI, Depends, Header, HTTPException, Query, Request, BackgroundTasks, status
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -724,58 +724,41 @@ async def verify_email(token: str, db: AsyncSession = Depends(get_db)):
     summary="Send OTP for email verification",
 )
 @limiter.limit("5/minute")
-async def send_otp(request: Request, body: OTPRequest, db: AsyncSession = Depends(get_db)):
+async def send_otp(
+    request: Request,
+    body: OTPRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
     # Find user
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
-    
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
-    
+
     if user.is_verified:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already verified",
         )
-    
+
     # Generate 6-digit OTP
     otp = ''.join(random.choices(string.digits, k=6))
-    
+
     # Set expiry (10 minutes)
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
-    
+
     user.verification_code = hash_password(otp)  # Store hashed, never plain-text
     user.verification_code_expires_at = expires_at
-    
-    await db.commit()
-    
-    # Send email without blocking the async event loop.
-    try:
-        email_sent = await asyncio.wait_for(
-            asyncio.to_thread(send_otp_email, user.email, otp, user.language),
-            timeout=10,
-        )
-    except asyncio.TimeoutError:
-        logger.exception("OTP email sending timed out for %s", user.email)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Could not send OTP email in time. Please try again.",
-        )
-    except Exception:
-        logger.exception("Failed to send OTP email for %s", user.email)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Could not send OTP email. Please check SMTP configuration.",
-        )
 
-    if not email_sent:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Could not send OTP email. Please check SMTP configuration.",
-        )
+    await db.commit()
+
+    # Send email in the background so network issues do not block the client.
+    background_tasks.add_task(send_otp_email, user.email, otp, user.language)
 
     return {"message": "OTP sent successfully"}
 

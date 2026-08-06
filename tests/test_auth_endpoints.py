@@ -374,7 +374,7 @@ async def test_send_otp_already_verified_returns_400(client):
 
 
 @pytest.mark.asyncio
-async def test_send_otp_email_failure_returns_500(client, monkeypatch):
+async def test_send_otp_email_failure_returns_200_when_queued_in_background(client, monkeypatch):
     user = make_user("otp-fail@example.com", verified=False)
     fake_db = FakeDB([FakeResult(scalar_value=user)])
 
@@ -386,7 +386,7 @@ async def test_send_otp_email_failure_returns_500(client, monkeypatch):
     app.dependency_overrides[get_db] = override_get_db
 
     response = await client.post("/auth/send-otp", json={"email": "otp-fail@example.com"})
-    assert response.status_code == 500
+    assert response.status_code == 200
 
 
 @pytest.mark.asyncio
