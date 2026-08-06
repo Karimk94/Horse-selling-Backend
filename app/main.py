@@ -90,6 +90,7 @@ from app.email_service import (
     send_offer_update_email,
     send_expo_push_notifications,
     send_expo_push_notifications_result,
+    get_email_failure_count,
 )
 from app.auth import (
     hash_password,
@@ -531,7 +532,11 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 )
 async def health_check():
     """Returns service health status."""
-    return {"status": "healthy", "service": "horse-marketplace-api"}
+    return {
+        "status": "healthy",
+        "service": "horse-marketplace-api",
+        "email_delivery_failures": get_email_failure_count(),
+    }
 
 # ── Include routers ───────────────────────────────────────────────────────────
 from app.media import router as media_router  # noqa: E402

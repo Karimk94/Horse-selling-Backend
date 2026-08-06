@@ -2,16 +2,33 @@ import smtplib
 import json
 import urllib.request
 import logging
+import threading
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import List, Dict, Union
 from app.config import (
+    EMAIL_BACKEND,
     SMTP_SERVER,
     SMTP_PORT,
     SMTP_USER,
     SMTP_PASSWORD,
     EMAIL_FROM,
 )
+
+_email_failure_count = 0
+_email_failure_lock = threading.Lock()
+
+
+def increment_email_failure_count() -> None:
+    global _email_failure_count
+    with _email_failure_lock:
+        _email_failure_count += 1
+
+
+def get_email_failure_count() -> int:
+    with _email_failure_lock:
+        return _email_failure_count
+
 
 
 logger = logging.getLogger(__name__)
@@ -24,7 +41,7 @@ def send_email(
     timeout_seconds: int = 10,
 ) -> bool:
     """
-    Send an email using SMTP.
+    Send an email using the configured backend.
     
     Args:
         to_email: Recipient email address
@@ -35,6 +52,26 @@ def send_email(
     Returns:
         bool: True if email sent successfully, False otherwise
     """
+    if EMAIL_BACKEND == "console":
+        logger.info(
+            "Console email to %s: subject=%s\n%s",
+            to_email,
+            subject,
+            html_content,
+        )
+        return True
+
+    if EMAIL_BACKEND != "smtp":
+        logger.warning(
+            "Email backend %s is not supported. Set EMAIL_BACKEND=smtp or console.",
+            EMAIL_BACKEND,
+        )
+        return False
+
+    if not SMTP_SERVER:
+        logger.warning("SMTP_SERVER is not configured, skipping email delivery.")
+        return False
+
     try:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
@@ -51,8 +88,9 @@ def send_email(
             server.sendmail(EMAIL_FROM, to_email, msg.as_string())
 
         return True
-    except Exception:
-        logger.exception("Error sending email to %s", to_email)
+    except Exception as exc:
+        increment_email_failure_count()
+        logger.warning("Email delivery failed for %s: %s", to_email, exc)
         return False
 
 

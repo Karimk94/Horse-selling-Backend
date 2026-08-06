@@ -43,6 +43,7 @@ UPLOAD_DIR = "uploads"
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
 # ── Email Configuration ───────────────────────────────────────────────────────
+EMAIL_BACKEND: str = os.getenv("EMAIL_BACKEND", "smtp").strip().lower()
 SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER: str = os.getenv("SMTP_USER", "")
