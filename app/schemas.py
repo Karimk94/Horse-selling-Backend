@@ -4,6 +4,348 @@ import enum
 from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
+class HorseOwnerResponse(BaseModel):
+    id: uuid.UUID
+    email: str
+    is_verified: bool
+    phone_number: str | None = None
+
+    model_config = {"from_attributes": True}
+
+    @model_validator(mode='before')
+    @classmethod
+    def extract_phone_from_profile(cls, data):
+        if hasattr(data, 'profile'):
+            profile = getattr(data, 'profile', None)
+            if profile and hasattr(profile, 'phone_number'):
+                return {
+                    'id': data.id,
+                    'email': data.email,
+                    'is_verified': data.is_verified,
+                    'phone_number': profile.phone_number
+                }
+        return data
+
+
+# ── Category Schemas ──────────────────────────────────────────────────────────
+
+
+class CategoryCreateRequest(BaseModel):
+    name_ar: str = Field(..., min_length=1, max_length=150)
+    name_en: str = Field(..., min_length=1, max_length=150)
+    slug: str = Field(..., min_length=1, max_length=100)
+    module: str = Field(..., pattern="^(equipment|rider_gear|services)$")
+    parent_id: uuid.UUID | None = None
+    icon_name: str | None = Field(None, max_length=80)
+    display_order: int = 0
+    is_active: bool = True
+
+
+class CategoryUpdateRequest(BaseModel):
+    name_ar: str | None = Field(None, min_length=1, max_length=150)
+    name_en: str | None = Field(None, min_length=1, max_length=150)
+    slug: str | None = Field(None, min_length=1, max_length=100)
+    module: str | None = Field(None, pattern="^(equipment|rider_gear|services)$")
+    parent_id: uuid.UUID | None = None
+    icon_name: str | None = Field(None, max_length=80)
+    display_order: int | None = None
+    is_active: bool | None = None
+
+
+class CategoryResponse(BaseModel):
+    id: uuid.UUID
+    name_ar: str
+    name_en: str
+    slug: str
+    module: str
+    parent_id: uuid.UUID | None = None
+    icon_name: str | None = None
+    display_order: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class CategoryTreeNode(CategoryResponse):
+    children: list["CategoryTreeNode"] = []
+
+    model_config = {"from_attributes": True}
+
+
+# ── Equipment Schemas ──────────────────────────────────────────────────────────
+
+
+class EquipmentImageResponse(BaseModel):
+    id: uuid.UUID
+    image_url: str
+    display_order: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class EquipmentCreateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    category_id: uuid.UUID | None = None
+    brand: str | None = Field(None, max_length=100)
+    sizes: list[str] | None = None
+    custom_size: str | None = Field(None, max_length=100)
+    price: float = Field(..., gt=0)
+    quantity: int = Field(1, ge=1)
+    location_text: str | None = Field(None, max_length=255)
+    latitude: float | None = None
+    longitude: float | None = None
+    description: str | None = None
+    image_urls: list[str] = Field(default_factory=list)
+
+    @model_validator(mode='before')
+    @classmethod
+    def convert_numerals(cls, data):
+        if isinstance(data, dict):
+            if 'price' in data and isinstance(data['price'], str):
+                data['price'] = normalize_numerals(data['price'])
+            if 'quantity' in data and isinstance(data['quantity'], str):
+                data['quantity'] = normalize_numerals(data['quantity'])
+        return data
+
+
+class EquipmentUpdateRequest(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=255)
+    category_id: uuid.UUID | None = None
+    brand: str | None = Field(None, max_length=100)
+    sizes: list[str] | None = None
+    custom_size: str | None = Field(None, max_length=100)
+    price: float | None = Field(None, gt=0)
+    quantity: int | None = Field(None, ge=1)
+    location_text: str | None = Field(None, max_length=255)
+    latitude: float | None = None
+    longitude: float | None = None
+    description: str | None = None
+    image_urls: list[str] | None = None
+
+
+class EquipmentResponse(BaseModel):
+    id: uuid.UUID
+    owner_id: uuid.UUID
+    category_id: uuid.UUID | None = None
+    title: str
+    brand: str | None = None
+    sizes: list[str] | None = None
+    custom_size: str | None = None
+    price: float
+    quantity: int
+    location_text: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    description: str | None = None
+    status: str = "approved"
+    rejection_reason: str | None = None
+    deleted_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    owner: HorseOwnerResponse | None = None
+    category: CategoryResponse | None = None
+    images: list[EquipmentImageResponse] = []
+
+    model_config = {"from_attributes": True}
+
+
+class EquipmentListResponse(BaseModel):
+    total: int
+    items: list[EquipmentResponse]
+
+
+# ── Rider Gear Schemas ─────────────────────────────────────────────────────────
+
+
+class RiderGearImageResponse(BaseModel):
+    id: uuid.UUID
+    image_url: str
+    display_order: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class RiderGearCreateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    category_id: uuid.UUID | None = None
+    brand: str | None = Field(None, max_length=100)
+    gender: str = Field("unisex", pattern="^(male|female|unisex)$")
+    sizes: list[str] | None = None
+    custom_size: str | None = Field(None, max_length=100)
+    price: float = Field(..., gt=0)
+    quantity: int = Field(1, ge=1)
+    location_text: str | None = Field(None, max_length=255)
+    latitude: float | None = None
+    longitude: float | None = None
+    description: str | None = None
+    image_urls: list[str] = Field(default_factory=list)
+
+    @model_validator(mode='before')
+    @classmethod
+    def convert_numerals(cls, data):
+        if isinstance(data, dict):
+            if 'price' in data and isinstance(data['price'], str):
+                data['price'] = normalize_numerals(data['price'])
+            if 'quantity' in data and isinstance(data['quantity'], str):
+                data['quantity'] = normalize_numerals(data['quantity'])
+        return data
+
+
+class RiderGearUpdateRequest(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=255)
+    category_id: uuid.UUID | None = None
+    brand: str | None = Field(None, max_length=100)
+    gender: str | None = Field(None, pattern="^(male|female|unisex)$")
+    sizes: list[str] | None = None
+    custom_size: str | None = Field(None, max_length=100)
+    price: float | None = Field(None, gt=0)
+    quantity: int | None = Field(None, ge=1)
+    location_text: str | None = Field(None, max_length=255)
+    latitude: float | None = None
+    longitude: float | None = None
+    description: str | None = None
+    image_urls: list[str] | None = None
+
+
+class RiderGearResponse(BaseModel):
+    id: uuid.UUID
+    owner_id: uuid.UUID
+    category_id: uuid.UUID | None = None
+    title: str
+    brand: str | None = None
+    gender: str = "unisex"
+    sizes: list[str] | None = None
+    custom_size: str | None = None
+    price: float
+    quantity: int
+    location_text: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    description: str | None = None
+    status: str = "approved"
+    rejection_reason: str | None = None
+    deleted_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    owner: HorseOwnerResponse | None = None
+    category: CategoryResponse | None = None
+    images: list[RiderGearImageResponse] = []
+
+    model_config = {"from_attributes": True}
+
+
+class RiderGearListResponse(BaseModel):
+    total: int
+    items: list[RiderGearResponse]
+
+
+# ── Service Schemas ───────────────────────────────────────────────────────────
+
+
+class ServiceImageResponse(BaseModel):
+    id: uuid.UUID
+    image_url: str
+    display_order: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ServiceInquiryCreateRequest(BaseModel):
+    inquirer_name: str = Field(..., min_length=1, max_length=150)
+    inquirer_phone: str = Field(..., min_length=1, max_length=50)
+    message: str | None = None
+    requested_date: datetime | None = None
+
+
+class ServiceInquiryResponse(BaseModel):
+    id: uuid.UUID
+    service_id: uuid.UUID
+    inquirer_id: uuid.UUID
+    inquirer_name: str
+    inquirer_phone: str
+    message: str | None = None
+    requested_date: datetime | None = None
+    status: str = "pending"
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ServiceCreateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    category_id: uuid.UUID | None = None
+    service_type: str = Field("housing_boarding", pattern="^(housing_boarding|training_instruction|health_care|commercial_transport|breeding|recreation_events)$")
+    pricing_type: str = Field("fixed", pattern="^(fixed|hourly|daily|monthly|per_head|inquiry)$")
+    price: float | None = Field(None, ge=0)
+    location_text: str | None = Field(None, max_length=255)
+    latitude: float | None = None
+    longitude: float | None = None
+    availability_calendar: str | None = None
+    description: str | None = None
+    image_urls: list[str] = Field(default_factory=list)
+
+    @model_validator(mode='before')
+    @classmethod
+    def convert_numerals(cls, data):
+        if isinstance(data, dict):
+            if 'price' in data and isinstance(data['price'], str):
+                data['price'] = normalize_numerals(data['price'])
+        return data
+
+
+class ServiceUpdateRequest(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=255)
+    category_id: uuid.UUID | None = None
+    service_type: str | None = Field(None, pattern="^(housing_boarding|training_instruction|health_care|commercial_transport|breeding|recreation_events)$")
+    pricing_type: str | None = Field(None, pattern="^(fixed|hourly|daily|monthly|per_head|inquiry)$")
+    price: float | None = Field(None, ge=0)
+    location_text: str | None = Field(None, max_length=255)
+    latitude: float | None = None
+    longitude: float | None = None
+    availability_calendar: str | None = None
+    description: str | None = None
+    image_urls: list[str] | None = None
+
+
+class ServiceResponse(BaseModel):
+    id: uuid.UUID
+    provider_id: uuid.UUID
+    category_id: uuid.UUID | None = None
+    title: str
+    service_type: str = "housing_boarding"
+    pricing_type: str = "fixed"
+    price: float | None = None
+    location_text: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    availability_calendar: str | None = None
+    description: str | None = None
+    status: str = "approved"
+    rejection_reason: str | None = None
+    deleted_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    provider: HorseOwnerResponse | None = None
+    category: CategoryResponse | None = None
+    images: list[ServiceImageResponse] = []
+
+    model_config = {"from_attributes": True}
+
+
+class ServiceListResponse(BaseModel):
+    total: int
+    items: list[ServiceResponse]
+
+
+
+
+
+
 # ── Auth Requests ─────────────────────────────────────────────────────────────
 
 
@@ -25,6 +367,8 @@ class SignupRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=128)
     role: str = "buyer"
+    first_name: str | None = Field(None, max_length=100)
+    last_name: str | None = Field(None, max_length=100)
     phone_number: str | None = Field(None, max_length=20)
     location: str | None = Field(None, max_length=255)
     language: str = "en"  # "en" or "ar"
@@ -140,9 +484,14 @@ class HorseCreateRequest(BaseModel):
     discount_value: float | None = Field(None, gt=0)
 
     @model_validator(mode='after')
-    def validate_vet_certificate(self):
+    def validate_listing_requirements(self):
         if self.vet_check_available and not self.vet_certificate_url:
             raise ValueError('vet_certificate_url is required when vet_check_available is True')
+        image_urls = self.image_urls or ([self.image_url] if self.image_url else [])
+        if len(image_urls) == 0:
+            raise ValueError('At least one listing image is required')
+        if not self.description or len(self.description.strip()) < 30:
+            raise ValueError('Description must be at least 30 characters long')
         return self
 
     @model_validator(mode='before')
@@ -215,31 +564,6 @@ class HorseImageResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class HorseOwnerResponse(BaseModel):
-    id: uuid.UUID
-    email: str
-    is_verified: bool
-    phone_number: str | None = None
-
-    model_config = {"from_attributes": True}
-
-    @model_validator(mode='before')
-    @classmethod
-    def extract_phone_from_profile(cls, data):
-        # If data is a SQLAlchemy model object
-        if hasattr(data, 'profile'):
-            profile = getattr(data, 'profile', None)
-            if profile and hasattr(profile, 'phone_number'):
-                # Create a dict with all needed fields
-                return {
-                    'id': data.id,
-                    'email': data.email,
-                    'is_verified': data.is_verified,
-                    'phone_number': profile.phone_number
-                }
-        return data
-
-
 class HorseResponse(BaseModel):
     id: uuid.UUID
     owner_id: uuid.UUID
@@ -261,6 +585,7 @@ class HorseResponse(BaseModel):
     discount_price: float | None = None
     status: str = "approved"  # pending_review, approved, rejected
     rejection_reason: str | None = None
+    deleted_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     owner: HorseOwnerResponse | None = None
@@ -272,6 +597,61 @@ class HorseResponse(BaseModel):
 class HorseListResponse(BaseModel):
     total: int
     horses: list[HorseResponse]
+
+class UserListResponse(BaseModel):
+    total: int
+    users: list[UserResponse]
+
+class ListingListResponse(BaseModel):
+    total: int
+    listings: list[HorseResponse]
+    restore_window_days: int | None = None
+
+
+class PurgeDeletedListingsResponse(BaseModel):
+    purged_count: int
+    retention_days: int
+    cutoff_at: datetime
+
+
+class AdminSecurityStatusResponse(BaseModel):
+    purge_confirm_token_strong: bool
+    expiry_purge_enabled: bool
+    restore_window_days: int
+
+
+class BulkRestoreListingsRequest(BaseModel):
+    """Request to bulk restore soft-deleted listings."""
+    horse_ids: list[uuid.UUID] = Field(..., min_length=1, max_length=200)
+
+    model_config = {"json_schema_extra": {"example": {"horse_ids": ["uuid1", "uuid2"]}}}
+
+
+class BulkRestoreListingsResponse(BaseModel):
+    """Response from bulk restore operation."""
+    restored_count: int
+    failed_count: int
+    expired_count: int
+    already_active_count: int
+
+
+class BulkPurgeDeletedListingsRequest(BaseModel):
+    """Request to bulk purge soft-deleted listings."""
+    horse_ids: list[uuid.UUID] = Field(..., min_length=1, max_length=200)
+    confirm_token: str = Field(..., min_length=5, max_length=20)
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {"horse_ids": ["uuid1", "uuid2"], "confirm_token": "PURGE"}
+        }
+    }
+
+
+class BulkPurgeDeletedListingsResponse(BaseModel):
+    """Response from bulk purge operation."""
+    purged_count: int
+    not_deleted_count: int
+    not_expired_count: int
 
 # ── Favorite Responses ────────────────────────────────────────────────────────
 
@@ -288,6 +668,81 @@ class AddFavoriteRequest(BaseModel):
     horse_id: uuid.UUID
 
 
+class SavedSearchCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    breed: str | None = Field(None, max_length=100)
+    discipline: str | None = Field(None, max_length=100)
+    gender: str | None = Field(None, pattern="^(mare|gelding|stallion)$")
+    min_price: float | None = Field(None, ge=0)
+    max_price: float | None = Field(None, ge=0)
+    min_age: int | None = Field(None, ge=0)
+    max_age: int | None = Field(None, ge=0)
+    vet_check_available: bool | None = None
+    verified_seller: bool | None = None
+    is_active: bool = True
+
+
+class SavedSearchUpdateRequest(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=120)
+    breed: str | None = Field(None, max_length=100)
+    discipline: str | None = Field(None, max_length=100)
+    gender: str | None = Field(None, pattern="^(mare|gelding|stallion)$")
+    min_price: float | None = Field(None, ge=0)
+    max_price: float | None = Field(None, ge=0)
+    min_age: int | None = Field(None, ge=0)
+    max_age: int | None = Field(None, ge=0)
+    vet_check_available: bool | None = None
+    verified_seller: bool | None = None
+    is_active: bool | None = None
+
+
+class SavedSearchResponse(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    name: str
+    breed: str | None
+    discipline: str | None
+    gender: str | None
+    min_price: float | None
+    max_price: float | None
+    min_age: int | None
+    max_age: int | None
+    vet_check_available: bool | None
+    verified_seller: bool | None
+    is_active: bool
+    last_alerted_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class SavedSearchAlertResponse(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    saved_search_id: uuid.UUID
+    horse_id: uuid.UUID
+    title: str
+    message: str
+    is_read: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class SavedSearchUnreadCountResponse(BaseModel):
+    unread_count: int
+
+
+class PushTokenRegisterRequest(BaseModel):
+    token: str = Field(..., min_length=10, max_length=255)
+    platform: str | None = Field(None, max_length=20)
+
+
+class PushTokenUnregisterRequest(BaseModel):
+    token: str = Field(..., min_length=10, max_length=255)
+
+
 # -- Admin Review Requests ----
 
 class AdminApproveListingRequest(BaseModel):
@@ -296,6 +751,16 @@ class AdminApproveListingRequest(BaseModel):
 
 class AdminRejectListingRequest(BaseModel):
     reason: str = Field(..., min_length=1, max_length=500)
+
+
+class ListingReviewResponse(BaseModel):
+    id: uuid.UUID
+    horse_id: uuid.UUID
+    admin_id: uuid.UUID
+    admin_email: str
+    action: str
+    reason: str | None = None
+    created_at: datetime
 
 
 # ── Voucher Schemas ───────────────────────────────────────────────────────────
@@ -335,6 +800,105 @@ class VoucherValidateRequest(BaseModel):
     code: str
     horse_id: uuid.UUID | None = None # Optional context to check if it applies (if we had specific vouchers)
     current_price: float | None = None # To calculate discount on the fly if needed
+
+
+# ── Offer Schemas (Buyer Negotiation) ────────────────────────────────────────
+
+class OfferCreateRequest(BaseModel):
+    amount: float = Field(..., gt=0)
+    message: str | None = Field(None, max_length=1000)
+
+
+class OfferCounterRequest(BaseModel):
+    counter_amount: float = Field(..., gt=0)
+    response_message: str | None = Field(None, max_length=1000)
+
+
+class OfferRejectRequest(BaseModel):
+    response_message: str | None = Field(None, max_length=1000)
+
+
+class OfferAcceptRequest(BaseModel):
+    response_message: str | None = Field(None, max_length=1000)
+
+
+class OfferCancelRequest(BaseModel):
+    response_message: str | None = Field(None, max_length=1000)
+
+
+class OfferResponse(BaseModel):
+    id: uuid.UUID
+    buyer_id: uuid.UUID
+    seller_id: uuid.UUID
+    horse_id: uuid.UUID
+    amount: float
+    counter_amount: float | None
+    status: str
+    message: str | None
+    response_message: str | None
+    created_at: datetime
+    updated_at: datetime
+    responded_at: datetime | None
+    buyer_email: str | None = None
+    seller_email: str | None = None
+    horse_title: str | None = None
+    
+    model_config = {"from_attributes": True}
+
+
+class OfferHistoryResponse(BaseModel):
+    offers: list[OfferResponse]
+    count: int
+    total: int | None = None
+    skip: int | None = None
+    limit: int | None = None
+    has_more: bool | None = None
+    
+    model_config = {"from_attributes": True}
+
+
+class OfferActionRequiredCountResponse(BaseModel):
+    actionable_count: int
+
+
+class OfferTransitionAuditResponse(BaseModel):
+    id: uuid.UUID
+    offer_id: uuid.UUID
+    changed_by_user_id: uuid.UUID | None
+    from_status: str
+    to_status: str
+    actor: str
+    response_message: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class OfferTransitionAuditListResponse(BaseModel):
+    total: int
+    count: int
+    logs: list[OfferTransitionAuditResponse]
+
+
+class PushDeliveryLogResponse(BaseModel):
+    id: uuid.UUID
+    target_user_id: uuid.UUID
+    provider: str
+    event_type: str | None
+    total_tokens: int
+    accepted_count: int
+    failed_count: int
+    status: str
+    error_message: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PushDeliveryLogListResponse(BaseModel):
+    total: int
+    count: int
+    logs: list[PushDeliveryLogResponse]
 
 class VoucherValidateResponse(BaseModel):
     valid: bool

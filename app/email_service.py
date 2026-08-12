@@ -1,47 +1,244 @@
 import smtplib
+import json
+import urllib.request
+import logging
+import threading
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import List, Dict, Union
+import requests
 from app.config import (
+    EMAIL_BACKEND,
     SMTP_SERVER,
     SMTP_PORT,
     SMTP_USER,
     SMTP_PASSWORD,
     EMAIL_FROM,
+    SENDGRID_API_KEY,
+    MAILGUN_API_KEY,
+    MAILGUN_DOMAIN,
+    RESEND_API_KEY,
 )
 
+_email_failure_count = 0
+_email_failure_lock = threading.Lock()
 
-def send_email(to_email: str, subject: str, html_content: str) -> bool:
-    """
-    Send an email using SMTP.
-    
-    Args:
-        to_email: Recipient email address
-        subject: Email subject
-        html_content: HTML content of the email
-    
-    Returns:
-        bool: True if email sent successfully, False otherwise
-    """
+
+def increment_email_failure_count() -> None:
+    global _email_failure_count
+    with _email_failure_lock:
+        _email_failure_count += 1
+
+
+def get_email_failure_count() -> int:
+    with _email_failure_lock:
+        return _email_failure_count
+
+
+
+logger = logging.getLogger(__name__)
+
+
+def _send_email_with_sendgrid(
+    to_email: str,
+    subject: str,
+    html_content: str,
+    timeout_seconds: int = 10,
+) -> bool:
+    if not SENDGRID_API_KEY:
+        logger.warning(
+            "SENDGRID_API_KEY is not configured, skipping SendGrid email delivery."
+        )
+        return False
+
+    payload = {
+        "personalizations": [{"to": [{"email": to_email}]}],
+        "from": {"email": EMAIL_FROM},
+        "subject": subject,
+        "content": [{"type": "text/html", "value": html_content}],
+    }
+    headers = {
+        "Authorization": f"Bearer {SENDGRID_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = requests.post(
+            "https://api.sendgrid.com/v3/mail/send",
+            json=payload,
+            headers=headers,
+            timeout=timeout_seconds,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"SendGrid error {response.status_code}: {response.text}"
+            )
+        return True
+    except Exception as exc:
+        increment_email_failure_count()
+        logger.warning("SendGrid email delivery failed for %s: %s", to_email, exc)
+        return False
+
+
+def _send_email_with_mailgun(
+    to_email: str,
+    subject: str,
+    html_content: str,
+    timeout_seconds: int = 10,
+) -> bool:
+    if not MAILGUN_API_KEY or not MAILGUN_DOMAIN:
+        logger.warning(
+            "MAILGUN_API_KEY or MAILGUN_DOMAIN is not configured, skipping Mailgun email delivery."
+        )
+        return False
+
+    auth = ("api", MAILGUN_API_KEY)
+    data = {
+        "from": EMAIL_FROM,
+        "to": to_email,
+        "subject": subject,
+        "html": html_content,
+    }
+
+    try:
+        response = requests.post(
+            f"https://api.mailgun.net/v3/{MAILGUN_DOMAIN}/messages",
+            auth=auth,
+            data=data,
+            timeout=timeout_seconds,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"Mailgun error {response.status_code}: {response.text}"
+            )
+        return True
+    except Exception as exc:
+        increment_email_failure_count()
+        logger.warning("Mailgun email delivery failed for %s: %s", to_email, exc)
+        return False
+
+
+def _send_email_with_smtp(
+    to_email: str,
+    subject: str,
+    html_content: str,
+    timeout_seconds: int = 10,
+) -> bool:
+    if not SMTP_SERVER:
+        logger.warning("SMTP_SERVER is not configured, skipping email delivery.")
+        return False
+
     try:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"] = EMAIL_FROM
         msg["To"] = to_email
 
-        # Attach HTML part
         html_part = MIMEText(html_content, "html")
         msg.attach(html_part)
 
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=timeout_seconds) as server:
             server.starttls()
             server.login(SMTP_USER, SMTP_PASSWORD)
             server.sendmail(EMAIL_FROM, to_email, msg.as_string())
 
         return True
-    except Exception as e:
-        print(f"Error sending email to {to_email}: {str(e)}")
+    except Exception as exc:
+        increment_email_failure_count()
+        logger.warning("SMTP email delivery failed for %s: %s", to_email, exc)
         return False
+
+
+def _send_email_with_resend(
+    to_email: str,
+    subject: str,
+    html_content: str,
+    timeout_seconds: int = 10,
+) -> bool:
+    if not RESEND_API_KEY:
+        logger.warning(
+            "RESEND_API_KEY is not configured, skipping Resend email delivery."
+        )
+        return False
+
+    smtp_server = SMTP_SERVER or "smtp.resend.com"
+    smtp_port = SMTP_PORT or 587
+    smtp_user = SMTP_USER or "apikey"
+    smtp_password = SMTP_PASSWORD or RESEND_API_KEY
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = EMAIL_FROM
+        msg["To"] = to_email
+
+        html_part = MIMEText(html_content, "html")
+        msg.attach(html_part)
+
+        with smtplib.SMTP(smtp_server, smtp_port, timeout=timeout_seconds) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.sendmail(EMAIL_FROM, to_email, msg.as_string())
+
+        return True
+    except Exception as exc:
+        increment_email_failure_count()
+        logger.warning("Resend SMTP email delivery failed for %s: %s", to_email, exc)
+        return False
+
+
+def send_email(
+    to_email: str,
+    subject: str,
+    html_content: str,
+    timeout_seconds: int = 10,
+) -> bool:
+    """
+    Send an email using the configured backend.
+    
+    Args:
+        to_email: Recipient email address
+        subject: Email subject
+        html_content: HTML content of the email
+        timeout_seconds: Socket timeout for SMTP operations in seconds.
+    
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    if EMAIL_BACKEND == "console":
+        logger.info(
+            "Console email to %s: subject=%s\n%s",
+            to_email,
+            subject,
+            html_content,
+        )
+        return True
+
+    if EMAIL_BACKEND == "resend":
+        return _send_email_with_resend(
+            to_email, subject, html_content, timeout_seconds
+        )
+
+    if EMAIL_BACKEND == "sendgrid":
+        return _send_email_with_sendgrid(
+            to_email, subject, html_content, timeout_seconds
+        )
+
+    if EMAIL_BACKEND == "mailgun":
+        return _send_email_with_mailgun(
+            to_email, subject, html_content, timeout_seconds
+        )
+
+    if EMAIL_BACKEND == "smtp":
+        return _send_email_with_smtp(
+            to_email, subject, html_content, timeout_seconds
+        )
+
+    logger.warning(
+        "Email backend %s is not supported. Set EMAIL_BACKEND=smtp, resend, sendgrid, mailgun, or console.",
+        EMAIL_BACKEND,
+    )
+    return False
 
 
 def get_common_styles(is_rtl: bool = False) -> str:
@@ -280,6 +477,220 @@ def send_otp_email(user_email: str, otp_code: str, language: str = "en") -> bool
                 <p style="color: #666; font-size: 14px;">
                     If you did not request this verification, please ignore this email.
                 </p>
+            </body>
+        </html>
+        """
+
+    return send_email(user_email, subject, html_content)
+
+
+def send_saved_search_match_email(
+    user_email: str,
+    horse_title: str,
+    horse_breed: str,
+    horse_price: float,
+    search_name: str,
+    language: str = "en",
+) -> bool:
+    """Notify buyers when a newly approved horse matches one of their saved searches."""
+    is_rtl = language == "ar"
+    styles = get_common_styles(is_rtl)
+
+    if language == "ar":
+        subject = f"حصان جديد يطابق تنبيهك: {search_name}"
+        html_content = f"""
+        <html>
+            <body style="{styles} line-height: 1.6; color: #333;">
+                <h2>تم العثور على حصان يطابق بحثك المحفوظ</h2>
+                <p><strong>اسم التنبيه:</strong> {search_name}</p>
+                <p><strong>العنوان:</strong> {horse_title}</p>
+                <p><strong>السلالة:</strong> {horse_breed}</p>
+                <p><strong>السعر:</strong> ${horse_price:,.0f}</p>
+                <p>افتح التطبيق الآن لمشاهدة التفاصيل والتواصل مع البائع.</p>
+            </body>
+        </html>
+        """
+    else:
+        subject = f"New horse matches your alert: {search_name}"
+        html_content = f"""
+        <html>
+            <body style="{styles} line-height: 1.6; color: #333;">
+                <h2>We found a horse matching your saved search</h2>
+                <p><strong>Alert name:</strong> {search_name}</p>
+                <p><strong>Title:</strong> {horse_title}</p>
+                <p><strong>Breed:</strong> {horse_breed}</p>
+                <p><strong>Price:</strong> ${horse_price:,.0f}</p>
+                <p>Open the app to view full details and contact the seller.</p>
+            </body>
+        </html>
+        """
+
+    return send_email(user_email, subject, html_content)
+
+
+def send_expo_push_notifications_result(
+    tokens: list[str],
+    title: str,
+    body: str,
+    data: dict | None = None,
+    max_retries: int = 1,
+    timeout_seconds: int = 10,
+) -> dict:
+    """Send push notifications and return structured delivery result details."""
+    if not tokens:
+        return {
+            "total_tokens": 0,
+            "accepted_count": 0,
+            "failed_count": 0,
+            "status": "no_tokens",
+            "error_message": None,
+        }
+
+    payload = [
+        {
+            "to": token,
+            "title": title,
+            "body": body,
+            "sound": "default",
+            "data": data or {},
+        }
+        for token in tokens
+    ]
+
+    req = urllib.request.Request(
+        url="https://exp.host/--/api/v2/push/send",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+
+    attempts = max(1, max_retries + 1)
+    last_error: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
+                raw = response.read().decode("utf-8")
+                parsed = json.loads(raw)
+                if not isinstance(parsed, dict):
+                    logger.warning("Expo push returned non-dict response on attempt %s", attempt)
+                    return {
+                        "total_tokens": len(tokens),
+                        "accepted_count": 0,
+                        "failed_count": len(tokens),
+                        "status": "failed",
+                        "error_message": "Non-dict response payload",
+                    }
+                tickets = parsed.get("data", [])
+                if not isinstance(tickets, list):
+                    logger.warning("Expo push returned invalid tickets payload on attempt %s", attempt)
+                    return {
+                        "total_tokens": len(tokens),
+                        "accepted_count": 0,
+                        "failed_count": len(tokens),
+                        "status": "failed",
+                        "error_message": "Invalid ticket payload",
+                    }
+                accepted = sum(
+                    1
+                    for ticket in tickets
+                    if isinstance(ticket, dict) and ticket.get("status") == "ok"
+                )
+                total = len(tokens)
+                failed = max(total - accepted, 0)
+                if failed:
+                    logger.warning(
+                        "Expo push accepted %s tickets and reported %s failed tickets",
+                        accepted,
+                        failed,
+                    )
+                return {
+                    "total_tokens": total,
+                    "accepted_count": accepted,
+                    "failed_count": failed,
+                    "status": "success" if failed == 0 else "partial",
+                    "error_message": None,
+                }
+        except Exception as exc:
+            last_error = exc
+            if attempt < attempts:
+                logger.warning(
+                    "Expo push attempt %s/%s failed; retrying",
+                    attempt,
+                    attempts,
+                    exc_info=True,
+                )
+                continue
+            logger.error(
+                "Expo push failed after %s attempts",
+                attempts,
+                exc_info=True,
+            )
+
+    return {
+        "total_tokens": len(tokens),
+        "accepted_count": 0,
+        "failed_count": len(tokens),
+        "status": "failed",
+        "error_message": str(last_error) if last_error else "Unknown push error",
+    }
+
+
+def send_expo_push_notifications(
+    tokens: list[str],
+    title: str,
+    body: str,
+    data: dict | None = None,
+    max_retries: int = 1,
+    timeout_seconds: int = 10,
+) -> int:
+    """Send push notifications via Expo Push API and return number of accepted tickets."""
+    result = send_expo_push_notifications_result(
+        tokens=tokens,
+        title=title,
+        body=body,
+        data=data,
+        max_retries=max_retries,
+        timeout_seconds=timeout_seconds,
+    )
+    return int(result.get("accepted_count", 0))
+
+
+def send_offer_update_email(
+    user_email: str,
+    horse_title: str,
+    update_title: str,
+    update_message: str,
+    language: str = "en",
+) -> bool:
+    """Send a generic offer workflow update email (new offer, counter, accepted, rejected)."""
+    is_rtl = language == "ar"
+    styles = get_common_styles(is_rtl)
+
+    if language == "ar":
+        subject = f"تحديث عرض: {horse_title}"
+        html_content = f"""
+        <html>
+            <body style="{styles} line-height: 1.6; color: #333;">
+                <h2>{update_title}</h2>
+                <p><strong>الحصان:</strong> {horse_title}</p>
+                <p>{update_message}</p>
+                <p>افتح التطبيق لمراجعة العرض واتخاذ الإجراء المناسب.</p>
+            </body>
+        </html>
+        """
+    else:
+        subject = f"Offer update: {horse_title}"
+        html_content = f"""
+        <html>
+            <body style="{styles} line-height: 1.6; color: #333;">
+                <h2>{update_title}</h2>
+                <p><strong>Horse:</strong> {horse_title}</p>
+                <p>{update_message}</p>
+                <p>Open the app to review this offer and take action.</p>
             </body>
         </html>
         """
