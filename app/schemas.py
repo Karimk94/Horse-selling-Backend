@@ -4,6 +4,325 @@ import enum
 from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
+# ── Category Schemas ──────────────────────────────────────────────────────────
+
+
+class CategoryCreateRequest(BaseModel):
+    name_ar: str = Field(..., min_length=1, max_length=150)
+    name_en: str = Field(..., min_length=1, max_length=150)
+    slug: str = Field(..., min_length=1, max_length=100)
+    module: str = Field(..., pattern="^(equipment|rider_gear|services)$")
+    parent_id: uuid.UUID | None = None
+    icon_name: str | None = Field(None, max_length=80)
+    display_order: int = 0
+    is_active: bool = True
+
+
+class CategoryUpdateRequest(BaseModel):
+    name_ar: str | None = Field(None, min_length=1, max_length=150)
+    name_en: str | None = Field(None, min_length=1, max_length=150)
+    slug: str | None = Field(None, min_length=1, max_length=100)
+    module: str | None = Field(None, pattern="^(equipment|rider_gear|services)$")
+    parent_id: uuid.UUID | None = None
+    icon_name: str | None = Field(None, max_length=80)
+    display_order: int | None = None
+    is_active: bool | None = None
+
+
+class CategoryResponse(BaseModel):
+    id: uuid.UUID
+    name_ar: str
+    name_en: str
+    slug: str
+    module: str
+    parent_id: uuid.UUID | None = None
+    icon_name: str | None = None
+    display_order: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class CategoryTreeNode(CategoryResponse):
+    children: list["CategoryTreeNode"] = []
+
+    model_config = {"from_attributes": True}
+
+
+# ── Equipment Schemas ──────────────────────────────────────────────────────────
+
+
+class EquipmentImageResponse(BaseModel):
+    id: uuid.UUID
+    image_url: str
+    display_order: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class EquipmentCreateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    category_id: uuid.UUID | None = None
+    brand: str | None = Field(None, max_length=100)
+    sizes: list[str] | None = None
+    custom_size: str | None = Field(None, max_length=100)
+    price: float = Field(..., gt=0)
+    quantity: int = Field(1, ge=1)
+    location_text: str | None = Field(None, max_length=255)
+    latitude: float | None = None
+    longitude: float | None = None
+    description: str | None = None
+    image_urls: list[str] = Field(default_factory=list)
+
+    @model_validator(mode='before')
+    @classmethod
+    def convert_numerals(cls, data):
+        if isinstance(data, dict):
+            if 'price' in data and isinstance(data['price'], str):
+                data['price'] = normalize_numerals(data['price'])
+            if 'quantity' in data and isinstance(data['quantity'], str):
+                data['quantity'] = normalize_numerals(data['quantity'])
+        return data
+
+
+class EquipmentUpdateRequest(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=255)
+    category_id: uuid.UUID | None = None
+    brand: str | None = Field(None, max_length=100)
+    sizes: list[str] | None = None
+    custom_size: str | None = Field(None, max_length=100)
+    price: float | None = Field(None, gt=0)
+    quantity: int | None = Field(None, ge=1)
+    location_text: str | None = Field(None, max_length=255)
+    latitude: float | None = None
+    longitude: float | None = None
+    description: str | None = None
+    image_urls: list[str] | None = None
+
+
+class EquipmentResponse(BaseModel):
+    id: uuid.UUID
+    owner_id: uuid.UUID
+    category_id: uuid.UUID | None = None
+    title: str
+    brand: str | None = None
+    sizes: list[str] | None = None
+    custom_size: str | None = None
+    price: float
+    quantity: int
+    location_text: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    description: str | None = None
+    status: str = "approved"
+    rejection_reason: str | None = None
+    deleted_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    owner: HorseOwnerResponse | None = None
+    category: CategoryResponse | None = None
+    images: list[EquipmentImageResponse] = []
+
+    model_config = {"from_attributes": True}
+
+
+class EquipmentListResponse(BaseModel):
+    total: int
+    items: list[EquipmentResponse]
+
+
+# ── Rider Gear Schemas ─────────────────────────────────────────────────────────
+
+
+class RiderGearImageResponse(BaseModel):
+    id: uuid.UUID
+    image_url: str
+    display_order: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class RiderGearCreateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    category_id: uuid.UUID | None = None
+    brand: str | None = Field(None, max_length=100)
+    gender: str = Field("unisex", pattern="^(male|female|unisex)$")
+    sizes: list[str] | None = None
+    custom_size: str | None = Field(None, max_length=100)
+    price: float = Field(..., gt=0)
+    quantity: int = Field(1, ge=1)
+    location_text: str | None = Field(None, max_length=255)
+    latitude: float | None = None
+    longitude: float | None = None
+    description: str | None = None
+    image_urls: list[str] = Field(default_factory=list)
+
+    @model_validator(mode='before')
+    @classmethod
+    def convert_numerals(cls, data):
+        if isinstance(data, dict):
+            if 'price' in data and isinstance(data['price'], str):
+                data['price'] = normalize_numerals(data['price'])
+            if 'quantity' in data and isinstance(data['quantity'], str):
+                data['quantity'] = normalize_numerals(data['quantity'])
+        return data
+
+
+class RiderGearUpdateRequest(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=255)
+    category_id: uuid.UUID | None = None
+    brand: str | None = Field(None, max_length=100)
+    gender: str | None = Field(None, pattern="^(male|female|unisex)$")
+    sizes: list[str] | None = None
+    custom_size: str | None = Field(None, max_length=100)
+    price: float | None = Field(None, gt=0)
+    quantity: int | None = Field(None, ge=1)
+    location_text: str | None = Field(None, max_length=255)
+    latitude: float | None = None
+    longitude: float | None = None
+    description: str | None = None
+    image_urls: list[str] | None = None
+
+
+class RiderGearResponse(BaseModel):
+    id: uuid.UUID
+    owner_id: uuid.UUID
+    category_id: uuid.UUID | None = None
+    title: str
+    brand: str | None = None
+    gender: str = "unisex"
+    sizes: list[str] | None = None
+    custom_size: str | None = None
+    price: float
+    quantity: int
+    location_text: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    description: str | None = None
+    status: str = "approved"
+    rejection_reason: str | None = None
+    deleted_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    owner: HorseOwnerResponse | None = None
+    category: CategoryResponse | None = None
+    images: list[RiderGearImageResponse] = []
+
+    model_config = {"from_attributes": True}
+
+
+class RiderGearListResponse(BaseModel):
+    total: int
+    items: list[RiderGearResponse]
+
+
+# ── Service Schemas ───────────────────────────────────────────────────────────
+
+
+class ServiceImageResponse(BaseModel):
+    id: uuid.UUID
+    image_url: str
+    display_order: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ServiceInquiryCreateRequest(BaseModel):
+    inquirer_name: str = Field(..., min_length=1, max_length=150)
+    inquirer_phone: str = Field(..., min_length=1, max_length=50)
+    message: str | None = None
+    requested_date: datetime | None = None
+
+
+class ServiceInquiryResponse(BaseModel):
+    id: uuid.UUID
+    service_id: uuid.UUID
+    inquirer_id: uuid.UUID
+    inquirer_name: str
+    inquirer_phone: str
+    message: str | None = None
+    requested_date: datetime | None = None
+    status: str = "pending"
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ServiceCreateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    category_id: uuid.UUID | None = None
+    service_type: str = Field("housing_boarding", pattern="^(housing_boarding|training_instruction|health_care|commercial_transport|breeding|recreation_events)$")
+    pricing_type: str = Field("fixed", pattern="^(fixed|hourly|daily|monthly|per_head|inquiry)$")
+    price: float | None = Field(None, ge=0)
+    location_text: str | None = Field(None, max_length=255)
+    latitude: float | None = None
+    longitude: float | None = None
+    availability_calendar: str | None = None
+    description: str | None = None
+    image_urls: list[str] = Field(default_factory=list)
+
+    @model_validator(mode='before')
+    @classmethod
+    def convert_numerals(cls, data):
+        if isinstance(data, dict):
+            if 'price' in data and isinstance(data['price'], str):
+                data['price'] = normalize_numerals(data['price'])
+        return data
+
+
+class ServiceUpdateRequest(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=255)
+    category_id: uuid.UUID | None = None
+    service_type: str | None = Field(None, pattern="^(housing_boarding|training_instruction|health_care|commercial_transport|breeding|recreation_events)$")
+    pricing_type: str | None = Field(None, pattern="^(fixed|hourly|daily|monthly|per_head|inquiry)$")
+    price: float | None = Field(None, ge=0)
+    location_text: str | None = Field(None, max_length=255)
+    latitude: float | None = None
+    longitude: float | None = None
+    availability_calendar: str | None = None
+    description: str | None = None
+    image_urls: list[str] | None = None
+
+
+class ServiceResponse(BaseModel):
+    id: uuid.UUID
+    provider_id: uuid.UUID
+    category_id: uuid.UUID | None = None
+    title: str
+    service_type: str = "housing_boarding"
+    pricing_type: str = "fixed"
+    price: float | None = None
+    location_text: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    availability_calendar: str | None = None
+    description: str | None = None
+    status: str = "approved"
+    rejection_reason: str | None = None
+    deleted_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    provider: HorseOwnerResponse | None = None
+    category: CategoryResponse | None = None
+    images: list[ServiceImageResponse] = []
+
+    model_config = {"from_attributes": True}
+
+
+class ServiceListResponse(BaseModel):
+    total: int
+    items: list[ServiceResponse]
+
+
+
+
+
+
 # ── Auth Requests ─────────────────────────────────────────────────────────────
 
 

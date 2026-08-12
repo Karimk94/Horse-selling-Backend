@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import engine, Base, get_db
-from app.models import User, UserProfile, Horse, HorseGender, UserRole, HorseImage, Favorite, Voucher, DiscountType, ListingReview, SavedSearch, SavedSearchAlert, PushToken, Offer, OfferStatus, OfferTransitionAudit, IdempotencyKey, PushDeliveryLog
+from app.models import User, UserProfile, Horse, HorseGender, UserRole, HorseImage, Favorite, Voucher, DiscountType, ListingReview, SavedSearch, SavedSearchAlert, PushToken, Offer, OfferStatus, OfferTransitionAudit, IdempotencyKey, PushDeliveryLog, Category, ListingModule
 from app.config import (
     AUTO_CREATE_SCHEMA,
     BASE_URL,
@@ -124,6 +124,61 @@ def warn_if_weak_purge_confirm_token() -> None:
     if not is_purge_confirm_token_strong():
         logger.warning(PURGE_TOKEN_WEAK_WARNING)
 
+
+async def seed_initial_categories():
+    """Seed initial categories on backend startup if the category table is empty."""
+    try:
+        async with AsyncSession(engine) as session:
+            count_stmt = select(func.count()).select_from(Category)
+            res = await session.execute(count_stmt)
+            if (res.scalar() or 0) > 0:
+                return
+
+            logger.info("Category table empty. Seeding initial categories...")
+
+            categories_data = [
+                # Equipment
+                {"module": ListingModule.EQUIPMENT, "name_ar": "معدات الركوب والسروج", "name_en": "Tack & Saddlery", "slug": "tack-saddlery", "icon": "shield-outline", "display_order": 1},
+                {"module": ListingModule.EQUIPMENT, "name_ar": "الألجمة والعنان", "name_en": "Bridles & Reins", "slug": "bridles-reins", "icon": "options-outline", "display_order": 2},
+                {"module": ListingModule.EQUIPMENT, "name_ar": "الرشمات والمقاود", "name_en": "Halters & Lead Ropes", "slug": "halters-lead-ropes", "icon": "link-outline", "display_order": 3},
+                {"module": ListingModule.EQUIPMENT, "name_ar": "أدوات العناية والتنظيف", "name_en": "Grooming & Care", "slug": "grooming-care", "icon": "sparkles-outline", "display_order": 4},
+                {"module": ListingModule.EQUIPMENT, "name_ar": "التغذية والمكملات", "name_en": "Nutrition & Supplements", "slug": "nutrition-supplements", "icon": "nutrition-outline", "display_order": 5},
+                {"module": ListingModule.EQUIPMENT, "name_ar": "مستلزمات الإسطبل", "name_en": "Stable & Pasture Supplies", "slug": "stable-supplies", "icon": "home-outline", "display_order": 6},
+                # Rider Gear
+                {"module": ListingModule.RIDER_GEAR, "name_ar": "خوذات ومعدات الحماية", "name_en": "Helmets & Safety Gear", "slug": "helmets-safety", "icon": "shield-checkmark-outline", "display_order": 1},
+                {"module": ListingModule.RIDER_GEAR, "name_ar": "أحذية الركوب والبوت", "name_en": "Riding Boots & Footwear", "slug": "riding-boots", "icon": "footsteps-outline", "display_order": 2},
+                {"module": ListingModule.RIDER_GEAR, "name_ar": "بنطال الركوب (البريدش)", "name_en": "Breeches & Riding Pants", "slug": "breeches-pants", "icon": "body-outline", "display_order": 3},
+                {"module": ListingModule.RIDER_GEAR, "name_ar": "سترات الحماية الهوائية", "name_en": "Safety Air Vests", "slug": "safety-vests", "icon": "shirt-outline", "display_order": 4},
+                {"module": ListingModule.RIDER_GEAR, "name_ar": "ملابس وجاكيتات الفارس", "name_en": "Apparel & Jackets", "slug": "apparel-jackets", "icon": "shirt-outline", "display_order": 5},
+                # Services
+                {"module": ListingModule.SERVICES, "name_ar": "إيواء الخيل والبوائك", "name_en": "Housing & Stables Boarding", "slug": "boarding-stables", "icon": "home-outline", "display_order": 1},
+                {"module": ListingModule.SERVICES, "name_ar": "التدريب والعسف", "name_en": "Training & Instruction", "slug": "training-coaching", "icon": "school-outline", "display_order": 2},
+                {"module": ListingModule.SERVICES, "name_ar": "الرعاية الصحية والبيطار", "name_en": "Health Care & Farrier", "slug": "health-farrier", "icon": "medkit-outline", "display_order": 3},
+                {"module": ListingModule.SERVICES, "name_ar": "نقل الخيل والوساطة", "name_en": "Commercial & Transport", "slug": "transport-logistics", "icon": "bus-outline", "display_order": 4},
+                {"module": ListingModule.SERVICES, "name_ar": "الإنتاج والتشبية", "name_en": "Breeding Services", "slug": "breeding-stud", "icon": "heart-outline", "display_order": 5},
+            ]
+
+            for cat_dict in categories_data:
+                cat = Category(
+                    id=uuid.uuid4(),
+                    module=cat_dict["module"],
+                    name_ar=cat_dict["name_ar"],
+                    name_en=cat_dict["name_en"],
+                    slug=cat_dict["slug"],
+                    icon=cat_dict["icon"],
+                    display_order=cat_dict["display_order"],
+                    is_active=True,
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+                session.add(cat)
+
+            await session.commit()
+            logger.info("Successfully seeded initial categories.")
+    except Exception as e:
+        logger.warning("Auto category seeding failed or skipped: %s", e)
+
+
 # ── Lifespan: create tables on startup ────────────────────────────────────────
 
 @asynccontextmanager
@@ -133,6 +188,7 @@ async def lifespan(app: FastAPI):
             await conn.run_sync(Base.metadata.create_all)
 
     warn_if_weak_purge_confirm_token()
+    await seed_initial_categories()
     
     # Start background scheduler for periodic cleanup tasks
     start_scheduler()
@@ -141,6 +197,7 @@ async def lifespan(app: FastAPI):
     
     # Cleanup on shutdown
     stop_scheduler()
+
 
 
 def matches_saved_search(horse: Horse, search: SavedSearch) -> bool:
@@ -540,8 +597,17 @@ async def health_check():
 
 # ── Include routers ───────────────────────────────────────────────────────────
 from app.media import router as media_router  # noqa: E402
+from app.routers import categories_router, equipment_router, rider_gear_router, services_router  # noqa: E402
 
 app.include_router(media_router)
+app.include_router(categories_router)
+app.include_router(equipment_router)
+app.include_router(rider_gear_router)
+app.include_router(services_router)
+
+
+
+
 
 
 # ── Auth endpoints ────────────────────────────────────────────────────────────

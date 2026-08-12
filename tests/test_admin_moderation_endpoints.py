@@ -81,8 +81,9 @@ async def _forbidden_non_admin_override():
 
 
 @pytest.fixture(autouse=True)
-def clear_dependency_overrides():
+def clear_dependency_overrides(monkeypatch):
     app.dependency_overrides.clear()
+    monkeypatch.setattr(main_module, "PURGE_CONFIRM_TOKEN", "PURGE")
     yield
     app.dependency_overrides.clear()
 

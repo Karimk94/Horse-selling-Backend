@@ -46,6 +46,8 @@ class FakeDB:
 @pytest.fixture(autouse=True)
 def clear_dependency_overrides():
     app.dependency_overrides.clear()
+    if hasattr(main_module, "limiter") and hasattr(main_module.limiter, "reset"):
+        main_module.limiter.reset()
     yield
     app.dependency_overrides.clear()
 

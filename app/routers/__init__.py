@@ -7,8 +7,10 @@ from .favorites import router as favorites_router
 from .vouchers import router as vouchers_router
 from .saved_searches import router as saved_searches_router
 from .notifications import router as notifications_router
-from .admin import router as admin_router
-from .offers import router as offers_router
+from .categories import router as categories_router
+from .equipment import router as equipment_router
+from .rider_gear import router as rider_gear_router
+from .services import router as services_router
 
 __all__ = [
     "auth_router",
@@ -18,6 +20,8 @@ __all__ = [
     "vouchers_router",
     "saved_searches_router",
     "notifications_router",
-    "admin_router",
-    "offers_router",
+    "categories_router",
+    "equipment_router",
+    "rider_gear_router",
+    "services_router",
 ]

@@ -473,6 +473,7 @@ async def test_admin_list_users_returns_users(client):
     user1.profile = UserProfile(user_id=user1_id)
     
     fake_db = FakeDB([
+        FakeResult(scalar_value=2),
         FakeResult(scalars_items=[admin, user1]),  # users list query
     ])
     
@@ -513,6 +514,7 @@ async def test_admin_list_pending(client):
     horse.images = []
     
     fake_db = FakeDB([
+        FakeResult(scalar_value=1),
         FakeResult(scalars_items=[horse]),  # pending horses query
     ])
     

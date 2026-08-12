@@ -19,6 +19,62 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 
+# ── Category (Marketplace Module Tree) ───────────────────────────────────────
+
+
+class ListingModule(str, enum.Enum):
+    EQUIPMENT = "equipment"     # مستلزمات الخيل
+    RIDER_GEAR = "rider_gear"   # مستلزمات الفارس
+    SERVICES = "services"       # الخدمات
+
+
+class Category(Base):
+    __tablename__ = "categories"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name_ar: Mapped[str] = mapped_column(String(150), nullable=False)
+    name_en: Mapped[str] = mapped_column(String(150), nullable=False)
+    slug: Mapped[str] = mapped_column(
+        String(100), nullable=False, unique=True, index=True
+    )
+    module: Mapped[ListingModule] = mapped_column(
+        Enum(ListingModule), nullable=False, index=True
+    )
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("categories.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    icon_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    # Self-referential relationships
+    parent: Mapped["Category | None"] = relationship(
+        back_populates="children", remote_side="Category.id"
+    )
+    children: Mapped[list["Category"]] = relationship(
+        back_populates="parent", cascade="all, delete-orphan", order_by="Category.display_order"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Category {self.slug} ({self.module.value})>"
+
+
 class UserRole(str, enum.Enum):
     BUYER = "buyer"
     SELLER = "seller"
@@ -595,3 +651,355 @@ class PushDeliveryLog(Base):
             f"<PushDeliveryLog user={self.target_user_id} status={self.status} "
             f"accepted={self.accepted_count}/{self.total_tokens}>"
         )
+
+
+# ── Equipment Listings (مستلزمات الخيل) ──────────────────────────────────────
+
+
+class EquipmentListing(Base):
+    __tablename__ = "equipment_listings"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    category_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("categories.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    brand: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    sizes: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array string e.g. '["S", "M", "L"]'
+    custom_size: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    location_text: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20), default="pending_review", nullable=False, index=True
+    )
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+    )
+
+    # Relationships
+    owner: Mapped["User"] = relationship()
+    category: Mapped["Category | None"] = relationship()
+    images: Mapped[list["EquipmentImage"]] = relationship(
+        back_populates="equipment", cascade="all, delete-orphan", order_by="EquipmentImage.display_order"
+    )
+
+    def __repr__(self) -> str:
+        return f"<EquipmentListing {self.title} price={self.price}>"
+
+
+class EquipmentImage(Base):
+    __tablename__ = "equipment_images"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    equipment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("equipment_listings.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    image_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    # Relationships
+    equipment: Mapped["EquipmentListing"] = relationship(back_populates="images")
+
+    def __repr__(self) -> str:
+        return f"<EquipmentImage {self.id} for Equipment {self.equipment_id}>"
+
+
+# ── Rider Apparel & Gear (مستلزمات الفارس) ───────────────────────────────────
+
+
+class RiderGender(str, enum.Enum):
+    MALE = "male"
+    FEMALE = "female"
+    UNISEX = "unisex"
+
+
+class RiderGearListing(Base):
+    __tablename__ = "rider_gear_listings"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    category_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("categories.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    brand: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    gender: Mapped[RiderGender] = mapped_column(
+        Enum(RiderGender), default=RiderGender.UNISEX, nullable=False, index=True
+    )
+    sizes: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array string e.g. '["M", "L"]'
+    custom_size: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    location_text: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20), default="pending_review", nullable=False, index=True
+    )
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+    )
+
+    # Relationships
+    owner: Mapped["User"] = relationship()
+    category: Mapped["Category | None"] = relationship()
+    images: Mapped[list["RiderGearImage"]] = relationship(
+        back_populates="rider_gear", cascade="all, delete-orphan", order_by="RiderGearImage.display_order"
+    )
+
+    def __repr__(self) -> str:
+        return f"<RiderGearListing {self.title} price={self.price}>"
+
+
+class RiderGearImage(Base):
+    __tablename__ = "rider_gear_images"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    rider_gear_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("rider_gear_listings.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    image_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    # Relationships
+    rider_gear: Mapped["RiderGearListing"] = relationship(back_populates="images")
+
+    def __repr__(self) -> str:
+        return f"<RiderGearImage {self.id} for RiderGear {self.rider_gear_id}>"
+
+
+# ── Equestrian Services (الخدمات والحجوزات) ─────────────────────────────────
+
+
+class ServiceType(str, enum.Enum):
+    HOUSING_BOARDING = "housing_boarding"
+    TRAINING_INSTRUCTION = "training_instruction"
+    HEALTH_CARE = "health_care"
+    COMMERCIAL_TRANSPORT = "commercial_transport"
+    BREEDING = "breeding"
+    RECREATION_EVENTS = "recreation_events"
+
+
+class ServicePricingType(str, enum.Enum):
+    FIXED = "fixed"
+    HOURLY = "hourly"
+    DAILY = "daily"
+    MONTHLY = "monthly"
+    PER_HEAD = "per_head"
+    INQUIRY = "inquiry"
+
+
+class InquiryStatus(str, enum.Enum):
+    PENDING = "pending"
+    CONTACTED = "contacted"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+class ServiceListing(Base):
+    __tablename__ = "service_listings"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    provider_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    category_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("categories.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    service_type: Mapped[ServiceType] = mapped_column(
+        Enum(ServiceType), default=ServiceType.HOUSING_BOARDING, nullable=False, index=True
+    )
+    pricing_type: Mapped[ServicePricingType] = mapped_column(
+        Enum(ServicePricingType), default=ServicePricingType.FIXED, nullable=False, index=True
+    )
+    price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    location_text: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    availability_calendar: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20), default="pending_review", nullable=False, index=True
+    )
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+    )
+
+    # Relationships
+    provider: Mapped["User"] = relationship()
+    category: Mapped["Category | None"] = relationship()
+    images: Mapped[list["ServiceImage"]] = relationship(
+        back_populates="service", cascade="all, delete-orphan", order_by="ServiceImage.display_order"
+    )
+    inquiries: Mapped[list["ServiceInquiry"]] = relationship(
+        back_populates="service", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"<ServiceListing {self.title} type={self.service_type}>"
+
+
+class ServiceImage(Base):
+    __tablename__ = "service_images"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    service_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("service_listings.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    image_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    # Relationships
+    service: Mapped["ServiceListing"] = relationship(back_populates="images")
+
+    def __repr__(self) -> str:
+        return f"<ServiceImage {self.id} for Service {self.service_id}>"
+
+
+class ServiceInquiry(Base):
+    __tablename__ = "service_inquiries"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    service_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("service_listings.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    inquirer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    inquirer_name: Mapped[str] = mapped_column(String(150), nullable=False)
+    inquirer_phone: Mapped[str] = mapped_column(String(50), nullable=False)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[InquiryStatus] = mapped_column(
+        Enum(InquiryStatus), default=InquiryStatus.PENDING, nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    # Relationships
+    service: Mapped["ServiceListing"] = relationship(back_populates="inquiries")
+    inquirer: Mapped["User"] = relationship()
+
+    def __repr__(self) -> str:
+        return f"<ServiceInquiry {self.id} for Service {self.service_id}>"
+
+
+
