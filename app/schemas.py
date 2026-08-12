@@ -4,6 +4,29 @@ import enum
 from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
+class HorseOwnerResponse(BaseModel):
+    id: uuid.UUID
+    email: str
+    is_verified: bool
+    phone_number: str | None = None
+
+    model_config = {"from_attributes": True}
+
+    @model_validator(mode='before')
+    @classmethod
+    def extract_phone_from_profile(cls, data):
+        if hasattr(data, 'profile'):
+            profile = getattr(data, 'profile', None)
+            if profile and hasattr(profile, 'phone_number'):
+                return {
+                    'id': data.id,
+                    'email': data.email,
+                    'is_verified': data.is_verified,
+                    'phone_number': profile.phone_number
+                }
+        return data
+
+
 # ── Category Schemas ──────────────────────────────────────────────────────────
 
 
@@ -539,31 +562,6 @@ class HorseImageResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
-
-
-class HorseOwnerResponse(BaseModel):
-    id: uuid.UUID
-    email: str
-    is_verified: bool
-    phone_number: str | None = None
-
-    model_config = {"from_attributes": True}
-
-    @model_validator(mode='before')
-    @classmethod
-    def extract_phone_from_profile(cls, data):
-        # If data is a SQLAlchemy model object
-        if hasattr(data, 'profile'):
-            profile = getattr(data, 'profile', None)
-            if profile and hasattr(profile, 'phone_number'):
-                # Create a dict with all needed fields
-                return {
-                    'id': data.id,
-                    'email': data.email,
-                    'is_verified': data.is_verified,
-                    'phone_number': profile.phone_number
-                }
-        return data
 
 
 class HorseResponse(BaseModel):
