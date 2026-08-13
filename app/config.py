@@ -35,7 +35,7 @@ AUTO_CREATE_SCHEMA: bool = os.getenv("AUTO_CREATE_SCHEMA", "false").lower() == "
 SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me-to-a-random-secret-key")
 ALGORITHM: str = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES: int = int(
-    os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30")
+    os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "129600")
 )
 
 # ── Local Storage ─────────────────────────────────────────────────────────────
