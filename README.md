@@ -9,7 +9,7 @@ A high-performance asynchronous REST API built with **FastAPI**, **PostgreSQL**,
 - **Media Uploads**: Direct-to-S3 file uploads using secure presigned URLs.
 - **Async Database**: Fully asynchronous database operations using `SQLAlchemy` and `asyncpg`.
 - **Automatic Docs**: Interactive API documentation via Swagger UI.
-
+t
 ## 🛠 Tech Stack
 
 - **Framework**: FastAPI
