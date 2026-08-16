@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Header, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Header, Query, status
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -93,7 +93,12 @@ async def list_horses(
 
 
 @router.post("/horses", response_model=HorseResponse, status_code=status.HTTP_201_CREATED, summary="Create a new horse listing")
-async def create_horse(body: HorseCreateRequest, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def create_horse(
+    body: HorseCreateRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     if not current_user.is_verified:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Please verify your email address before creating a listing")
     image_urls = body.image_urls or ([body.image_url] if body.image_url else [])
@@ -114,7 +119,12 @@ async def create_horse(body: HorseCreateRequest, db: AsyncSession = Depends(get_
     admin_users = admin_result.scalars().all()
     admins_data = [{"email": admin.email, "language": admin.language} for admin in admin_users]
     if admins_data:
-        send_pending_review_notification(admins_data, horse.title, current_user.email)
+        background_tasks.add_task(
+            send_pending_review_notification,
+            admins_data,
+            horse.title,
+            current_user.email,
+        )
     return horse
 
 

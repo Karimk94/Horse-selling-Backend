@@ -1628,6 +1628,7 @@ async def list_horses(
 )
 async def create_horse(
     body: HorseCreateRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1700,7 +1701,12 @@ async def create_horse(
     admins_data = [{"email": admin.email, "language": admin.language} for admin in admin_users]
     
     if admins_data:
-        send_pending_review_notification(admins_data, horse.title, current_user.email)
+        background_tasks.add_task(
+            send_pending_review_notification,
+            admins_data,
+            horse.title,
+            current_user.email,
+        )
     
     return horse
 
