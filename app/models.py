@@ -226,6 +226,9 @@ class Horse(Base):
         Boolean, default=False, nullable=False
     )
     vet_certificate_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    location_text: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     
     # Discount fields
     discount_type: Mapped[DiscountType | None] = mapped_column(Enum(DiscountType), nullable=True)

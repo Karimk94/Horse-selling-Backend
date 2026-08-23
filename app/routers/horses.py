@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Header, Query, status
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -44,6 +44,10 @@ async def list_horses(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
     owner_id: Optional[uuid.UUID] = Query(None),
+    q: Optional[str] = Query(None, description="Search query across title, breed, description, location"),
+    lat: Optional[float] = Query(None, description="Current latitude for radius filter"),
+    lon: Optional[float] = Query(None, description="Current longitude for radius filter"),
+    radius_km: Optional[float] = Query(None, gt=0, description="Max radius in km"),
     current_user: Optional[User] = Depends(get_optional_current_user),
 ):
     query = select(Horse).options(
@@ -79,6 +83,29 @@ async def list_horses(
         query = query.where(Horse.owner.has(User.is_verified == verified_seller))
     if gender is not None:
         query = query.where(Horse.gender == gender)
+
+    # Text search across title, breed, description, location
+    if q and q.strip():
+        search_term = f"%{q.strip().lower()}%"
+        query = query.where(
+            or_(
+                func.lower(Horse.title).like(search_term),
+                func.lower(Horse.breed).like(search_term),
+                func.lower(Horse.description).like(search_term),
+                func.lower(Horse.location_text).like(search_term),
+            )
+        )
+
+    # Location Radius Filter (Haversine)
+    if lat is not None and lon is not None and radius_km is not None:
+        haversine = 6371 * func.acos(
+            func.cos(func.radians(lat))
+            * func.cos(func.radians(Horse.latitude))
+            * func.cos(func.radians(Horse.longitude) - func.radians(lon))
+            + func.sin(func.radians(lat)) * func.sin(func.radians(Horse.latitude))
+        )
+        query = query.where(haversine <= radius_km)
+
     count_query = select(func.count()).select_from(query.subquery())
     total = (await db.execute(count_query)).scalar() or 0
     _sort_map = {
@@ -102,7 +129,7 @@ async def create_horse(
     if not current_user.is_verified:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Please verify your email address before creating a listing")
     image_urls = body.image_urls or ([body.image_url] if body.image_url else [])
-    horse = Horse(owner_id=current_user.id, title=body.title, price=body.price, breed=body.breed, age=body.age, gender=HorseGender(body.gender), discipline=body.discipline, height=body.height, description=body.description, vet_check_available=body.vet_check_available, vet_certificate_url=body.vet_certificate_url, image_url=image_urls[0] if image_urls else None, discount_type=DiscountType(body.discount_type) if body.discount_type else None, discount_value=body.discount_value, status="pending_review")
+    horse = Horse(owner_id=current_user.id, title=body.title, price=body.price, breed=body.breed, age=body.age, gender=HorseGender(body.gender), discipline=body.discipline, height=body.height, description=body.description, vet_check_available=body.vet_check_available, vet_certificate_url=body.vet_certificate_url, location_text=body.location_text, latitude=body.latitude, longitude=body.longitude, image_url=image_urls[0] if image_urls else None, discount_type=DiscountType(body.discount_type) if body.discount_type else None, discount_value=body.discount_value, status="pending_review")
     if horse.discount_type and horse.discount_value:
         if horse.discount_type == DiscountType.PERCENTAGE:
             horse.discount_price = horse.price * (1 - horse.discount_value / 100)
@@ -165,6 +192,9 @@ async def update_horse(horse_id: uuid.UUID, body: HorseUpdateRequest, db: AsyncS
     if body.description is not None: horse.description = body.description
     if body.vet_check_available is not None: horse.vet_check_available = body.vet_check_available
     if body.vet_certificate_url is not None: horse.vet_certificate_url = body.vet_certificate_url
+    if body.location_text is not None: horse.location_text = body.location_text
+    if body.latitude is not None: horse.latitude = body.latitude
+    if body.longitude is not None: horse.longitude = body.longitude
     if body.discount_type is not None: horse.discount_type = DiscountType(body.discount_type) if body.discount_type else None
     if body.discount_value is not None: horse.discount_value = body.discount_value
     if horse.discount_type and horse.discount_value:

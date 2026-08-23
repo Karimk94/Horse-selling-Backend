@@ -476,6 +476,9 @@ class HorseCreateRequest(BaseModel):
     description: str | None = None
     vet_check_available: bool = False
     vet_certificate_url: str | None = None
+    location_text: str | None = Field(None, max_length=255)
+    latitude: float | None = None
+    longitude: float | None = None
     image_url: str | None = None  # Deprecated: use image_urls instead
     image_urls: list[str] | None = None  # List of image URLs
     
@@ -519,6 +522,9 @@ class HorseUpdateRequest(BaseModel):
     description: str | None = None
     vet_check_available: bool | None = None
     vet_certificate_url: str | None = None
+    location_text: str | None = Field(None, max_length=255)
+    latitude: float | None = None
+    longitude: float | None = None
     image_url: str | None = None  # Deprecated: use image_urls instead
     image_urls: list[str] | None = None  # Replace all images with this list
     
@@ -577,6 +583,9 @@ class HorseResponse(BaseModel):
     description: str | None
     vet_check_available: bool
     vet_certificate_url: str | None
+    location_text: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
     image_url: str | None  # Deprecated: use images instead
     
     # Discount fields
