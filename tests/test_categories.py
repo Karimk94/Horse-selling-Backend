@@ -6,9 +6,10 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from app.main import app, get_current_admin, get_db
+from app.main import app, get_current_admin, get_db, seed_initial_categories
 from app.models import Category, ListingModule, User, UserRole
 from app.routers.categories import build_tree
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 def test_build_tree_hierarchy():
@@ -80,6 +81,25 @@ class FakeSession:
             obj.created_at = datetime.now(timezone.utc)
         if not hasattr(obj, "updated_at") or not obj.updated_at:
             obj.updated_at = datetime.now(timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_seed_initial_categories_uses_icon_name_field():
+    result = type("Result", (), {"scalar": lambda self: 0})()
+
+    with patch("app.main.select") as select_mock, patch("app.main.AsyncSession") as session_cls, patch("app.main.Category") as category_cls:
+        select_mock.return_value.select_from.return_value = MagicMock()
+        session = session_cls.return_value.__aenter__.return_value
+        session.execute.return_value = result
+        session.add = MagicMock()
+        session.commit = AsyncMock()
+
+        await seed_initial_categories()
+
+        category_calls = category_cls.call_args_list
+        assert category_calls, "Category constructor should be called during startup seeding"
+        assert any("icon_name" in call.kwargs for call in category_calls)
+        assert all("icon" not in call.kwargs for call in category_calls)
 
 
 @pytest.mark.asyncio

@@ -40,7 +40,7 @@ class Category(Base):
         String(100), nullable=False, unique=True, index=True
     )
     module: Mapped[ListingModule] = mapped_column(
-        Enum(ListingModule), nullable=False, index=True
+        Enum(ListingModule, native_enum=False), nullable=False, index=True
     )
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
@@ -101,7 +101,7 @@ class User(Base):
     )
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(
-        Enum(UserRole), default=UserRole.BUYER, nullable=False
+        Enum(UserRole, native_enum=False), default=UserRole.BUYER, nullable=False
     )
     language: Mapped[str] = mapped_column(String(10), default="en", nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -217,7 +217,7 @@ class Horse(Base):
     breed: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     age: Mapped[int] = mapped_column(Integer, nullable=False)
     gender: Mapped[HorseGender] = mapped_column(
-        Enum(HorseGender), nullable=False
+        Enum(HorseGender, native_enum=False), nullable=False
     )
     discipline: Mapped[str | None] = mapped_column(String(100), nullable=True)
     height: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -231,7 +231,7 @@ class Horse(Base):
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     
     # Discount fields
-    discount_type: Mapped[DiscountType | None] = mapped_column(Enum(DiscountType), nullable=True)
+    discount_type: Mapped[DiscountType | None] = mapped_column(Enum(DiscountType, native_enum=False), nullable=True)
     discount_value: Mapped[float | None] = mapped_column(Float, nullable=True)
     discount_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     
@@ -332,7 +332,7 @@ class Voucher(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     code: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
-    discount_type: Mapped[DiscountType] = mapped_column(Enum(DiscountType), nullable=False)
+    discount_type: Mapped[DiscountType] = mapped_column(Enum(DiscountType, native_enum=False), nullable=False)
     discount_value: Mapped[float] = mapped_column(Float, nullable=False)
     
     valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -528,7 +528,7 @@ class Offer(Base):
     amount: Mapped[float] = mapped_column(Float, nullable=False)
     counter_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[OfferStatus] = mapped_column(
-        Enum(OfferStatus), default=OfferStatus.PENDING, nullable=False
+        Enum(OfferStatus, native_enum=False), default=OfferStatus.PENDING, nullable=False
     )
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
     response_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -776,7 +776,7 @@ class RiderGearListing(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     brand: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     gender: Mapped[RiderGender] = mapped_column(
-        Enum(RiderGender), default=RiderGender.UNISEX, nullable=False, index=True
+        Enum(RiderGender, native_enum=False), default=RiderGender.UNISEX, nullable=False, index=True
     )
     sizes: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array string e.g. '["M", "L"]'
     custom_size: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -893,10 +893,10 @@ class ServiceListing(Base):
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     service_type: Mapped[ServiceType] = mapped_column(
-        Enum(ServiceType), default=ServiceType.HOUSING_BOARDING, nullable=False, index=True
+        Enum(ServiceType, native_enum=False), default=ServiceType.HOUSING_BOARDING, nullable=False, index=True
     )
     pricing_type: Mapped[ServicePricingType] = mapped_column(
-        Enum(ServicePricingType), default=ServicePricingType.FIXED, nullable=False, index=True
+        Enum(ServicePricingType, native_enum=False), default=ServicePricingType.FIXED, nullable=False, index=True
     )
     price: Mapped[float | None] = mapped_column(Float, nullable=True)
     location_text: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -989,7 +989,7 @@ class ServiceInquiry(Base):
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
     requested_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[InquiryStatus] = mapped_column(
-        Enum(InquiryStatus), default=InquiryStatus.PENDING, nullable=False, index=True
+        Enum(InquiryStatus, native_enum=False), default=InquiryStatus.PENDING, nullable=False, index=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

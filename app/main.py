@@ -165,7 +165,7 @@ async def seed_initial_categories():
                     name_ar=cat_dict["name_ar"],
                     name_en=cat_dict["name_en"],
                     slug=cat_dict["slug"],
-                    icon=cat_dict["icon"],
+                    icon_name=cat_dict.get("icon_name") or cat_dict.get("icon"),
                     display_order=cat_dict["display_order"],
                     is_active=True,
                     created_at=datetime.now(timezone.utc),
