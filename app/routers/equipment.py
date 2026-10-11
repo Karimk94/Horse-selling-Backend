@@ -381,6 +381,37 @@ async def admin_list_pending_equipment(
     )
 
 
+@router.get("/admin/equipment/rejected", response_model=EquipmentListResponse, summary="List rejected equipment listings (Admin)")
+async def admin_list_rejected_equipment(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+):
+    query = (
+        select(EquipmentListing)
+        .options(
+            selectinload(EquipmentListing.owner).selectinload(User.profile),
+            selectinload(EquipmentListing.category),
+            selectinload(EquipmentListing.images),
+        )
+        .where(EquipmentListing.status == "rejected")
+        .where(EquipmentListing.deleted_at.is_(None))
+    )
+
+    count_query = select(func.count()).select_from(query.subquery())
+    total = (await db.execute(count_query)).scalar() or 0
+
+    query = query.order_by(EquipmentListing.updated_at.desc()).offset(skip).limit(limit)
+    result = await db.execute(query)
+    items = list(result.scalars().all())
+
+    return EquipmentListResponse(
+        total=total,
+        items=[_format_equipment_response(item) for item in items],
+    )
+
+
 @router.post("/admin/equipment/{equipment_id}/approve", response_model=EquipmentResponse, summary="Approve equipment listing (Admin)")
 async def admin_approve_equipment(
     equipment_id: uuid.UUID,

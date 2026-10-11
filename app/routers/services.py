@@ -446,6 +446,37 @@ async def admin_list_pending_services(
     )
 
 
+@router.get("/admin/services/rejected", response_model=ServiceListResponse, summary="List rejected service listings (Admin)")
+async def admin_list_rejected_services(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+):
+    query = (
+        select(ServiceListing)
+        .options(
+            selectinload(ServiceListing.provider).selectinload(User.profile),
+            selectinload(ServiceListing.category),
+            selectinload(ServiceListing.images),
+        )
+        .where(ServiceListing.status == "rejected")
+        .where(ServiceListing.deleted_at.is_(None))
+    )
+
+    count_query = select(func.count()).select_from(query.subquery())
+    total = (await db.execute(count_query)).scalar() or 0
+
+    query = query.order_by(ServiceListing.updated_at.desc()).offset(skip).limit(limit)
+    result = await db.execute(query)
+    items = list(result.scalars().all())
+
+    return ServiceListResponse(
+        total=total,
+        items=[_format_service_response(item) for item in items],
+    )
+
+
 @router.post("/admin/services/{service_id}/approve", response_model=ServiceResponse, summary="Approve service listing (Admin)")
 async def admin_approve_service(
     service_id: uuid.UUID,

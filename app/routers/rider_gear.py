@@ -384,6 +384,37 @@ async def admin_list_pending_rider_gear(
     )
 
 
+@router.get("/admin/rider-gear/rejected", response_model=RiderGearListResponse, summary="List rejected rider gear listings (Admin)")
+async def admin_list_rejected_rider_gear(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+):
+    query = (
+        select(RiderGearListing)
+        .options(
+            selectinload(RiderGearListing.owner).selectinload(User.profile),
+            selectinload(RiderGearListing.category),
+            selectinload(RiderGearListing.images),
+        )
+        .where(RiderGearListing.status == "rejected")
+        .where(RiderGearListing.deleted_at.is_(None))
+    )
+
+    count_query = select(func.count()).select_from(query.subquery())
+    total = (await db.execute(count_query)).scalar() or 0
+
+    query = query.order_by(RiderGearListing.updated_at.desc()).offset(skip).limit(limit)
+    result = await db.execute(query)
+    items = list(result.scalars().all())
+
+    return RiderGearListResponse(
+        total=total,
+        items=[_format_rider_gear_response(item) for item in items],
+    )
+
+
 @router.post("/admin/rider-gear/{rider_gear_id}/approve", response_model=RiderGearResponse, summary="Approve rider gear listing (Admin)")
 async def admin_approve_rider_gear(
     rider_gear_id: uuid.UUID,
