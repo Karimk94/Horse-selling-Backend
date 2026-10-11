@@ -5,13 +5,14 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional, Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Header, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Header, Query, status
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.auth import get_current_user, get_current_admin, get_optional_current_user
 from app.database import get_db
+from app.email_service import send_pending_review_notification
 from app.models import (
     EquipmentListing, EquipmentImage, Category, User, UserRole
 )
@@ -98,8 +99,6 @@ async def list_equipment(
     show_all_statuses = False
     if current_user:
         if owner_id and owner_id == current_user.id:
-            show_all_statuses = True
-        elif current_user.role == UserRole.ADMIN:
             show_all_statuses = True
 
     if status_filter:
@@ -188,6 +187,7 @@ async def get_equipment(
 @router.post("/equipment", response_model=EquipmentResponse, status_code=status.HTTP_201_CREATED, summary="Create equipment listing")
 async def create_equipment(
     payload: EquipmentCreateRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -244,6 +244,19 @@ async def create_equipment(
         .where(EquipmentListing.id == item.id)
     )
     loaded_item = (await db.execute(query)).scalar_one()
+
+    # Notify all admins that a new listing needs review
+    admin_result = await db.execute(select(User).where(User.role == UserRole.ADMIN))
+    admin_users = admin_result.scalars().all()
+    admins_data = [{"email": admin.email, "language": admin.language} for admin in admin_users]
+    if admins_data:
+        background_tasks.add_task(
+            send_pending_review_notification,
+            admins_data,
+            item.title,
+            current_user.email,
+        )
+
     return _format_equipment_response(loaded_item)
 
 
