@@ -108,3 +108,33 @@ async def test_upload_file_save_error_returns_500(
 
     assert response.status_code == 500
     assert "Could not save file" in response.json()["detail"]
+
+
+def test_normalize_media_url_replaces_domain():
+    from app.schemas import normalize_media_url, HorseImageResponse
+    from app.config import BASE_URL
+    import uuid
+    from datetime import datetime, timezone
+
+    # Should replace localhost with BASE_URL
+    res = normalize_media_url("http://localhost:8000/uploads/test.jpg")
+    expected_base = (BASE_URL or "").rstrip("/")
+    assert res == f"{expected_base}/uploads/test.jpg"
+
+    # Should replace outdated domain with BASE_URL
+    res2 = normalize_media_url("https://steedmarket-backend.up.railway.app/uploads/test.jpg")
+    assert res2 == f"{expected_base}/uploads/test.jpg"
+
+    # Preserves non-upload URLs
+    res3 = normalize_media_url("https://s3.amazonaws.com/bucket/pic.jpg")
+    assert res3 == "https://s3.amazonaws.com/bucket/pic.jpg"
+
+    # Schema automatically normalizes
+    img_resp = HorseImageResponse(
+        id=uuid.uuid4(),
+        image_url="http://localhost:8000/uploads/my-horse.jpg",
+        display_order=0,
+        created_at=datetime.now(timezone.utc),
+    )
+    assert img_resp.image_url == f"{expected_base}/uploads/my-horse.jpg"
+

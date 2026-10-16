@@ -1,7 +1,21 @@
 import uuid
 from datetime import datetime
 import enum
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, model_validator, field_validator
+from app.config import BASE_URL
+
+
+def normalize_media_url(url: str | None) -> str | None:
+    """Normalize local/legacy upload URLs so they resolve against current BASE_URL."""
+    if not url or not isinstance(url, str):
+        return url
+    uploads_idx = url.find("/uploads/")
+    if uploads_idx != -1:
+        base = (BASE_URL or "").rstrip("/")
+        rel = url[uploads_idx:]
+        return f"{base}{rel}"
+    return url
+
 
 
 class HorseOwnerResponse(BaseModel):
@@ -85,6 +99,12 @@ class EquipmentImageResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def normalize_img_url(cls, v):
+        return normalize_media_url(v)
+
+
 
 class EquipmentCreateRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
@@ -167,6 +187,12 @@ class RiderGearImageResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def normalize_img_url(cls, v):
+        return normalize_media_url(v)
+
 
 
 class RiderGearCreateRequest(BaseModel):
@@ -253,6 +279,12 @@ class ServiceImageResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def normalize_img_url(cls, v):
+        return normalize_media_url(v)
+
 
 
 class ServiceInquiryCreateRequest(BaseModel):
@@ -569,6 +601,11 @@ class HorseImageResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def normalize_img_url(cls, v):
+        return normalize_media_url(v)
+
 
 class HorseResponse(BaseModel):
     id: uuid.UUID
@@ -601,6 +638,12 @@ class HorseResponse(BaseModel):
     images: list[HorseImageResponse] = []  # List of all images
 
     model_config = {"from_attributes": True}
+
+    @field_validator("image_url", "vet_certificate_url", mode="before")
+    @classmethod
+    def normalize_horse_urls(cls, v):
+        return normalize_media_url(v)
+
 
 
 class HorseListResponse(BaseModel):

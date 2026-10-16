@@ -251,7 +251,7 @@ async def create_rider_gear(
     # Notify all admins that a new listing needs review
     admin_result = await db.execute(select(User).where(User.role == UserRole.ADMIN))
     admin_users = admin_result.scalars().all()
-    admins_data = [{"email": admin.email, "language": admin.language} for admin in admin_users]
+    admins_data = [{"email": admin.email, "language": admin.language} for admin in admin_users if hasattr(admin, "email")]
     if admins_data:
         background_tasks.add_task(
             send_pending_review_notification,

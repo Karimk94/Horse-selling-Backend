@@ -62,6 +62,7 @@ async def upload_file(
 
     # Construct full URL
     # If serving via ngrok, BASE_URL should be the ngrok URL
-    file_url = f"{BASE_URL}/uploads/{unique_name}"
+    base = (BASE_URL or "").rstrip("/")
+    file_url = f"{base}/uploads/{unique_name}"
 
     return UploadResponse(file_url=file_url)

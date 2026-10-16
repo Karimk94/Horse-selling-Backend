@@ -40,7 +40,12 @@ ACCESS_TOKEN_EXPIRE_MINUTES: int = int(
 
 # ── Local Storage ─────────────────────────────────────────────────────────────
 UPLOAD_DIR = "uploads"
-BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
+_railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("RAILWAY_STATIC_URL")
+if _railway_domain and not os.getenv("BASE_URL"):
+    BASE_URL = f"https://{_railway_domain}".rstrip("/")
+else:
+    BASE_URL = os.getenv("BASE_URL", "http://localhost:8000").rstrip("/")
+
 
 # ── Email Configuration ───────────────────────────────────────────────────────
 EMAIL_BACKEND: str = os.getenv("EMAIL_BACKEND", "smtp").strip().lower()
