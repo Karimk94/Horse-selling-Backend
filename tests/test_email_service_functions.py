@@ -23,6 +23,7 @@ from app.email_service import (
 class TestSendEmail:
     """Test the basic send_email function."""
 
+    @patch('app.email_service.EMAIL_BACKEND', 'smtp')
     @patch('app.email_service.smtplib.SMTP')
     def test_send_email_success(self, mock_smtp_class):
         """send_email returns True on successful send."""
@@ -42,6 +43,7 @@ class TestSendEmail:
         mock_server.login.assert_called_once()
         mock_server.sendmail.assert_called_once()
 
+    @patch('app.email_service.EMAIL_BACKEND', 'smtp')
     @patch('app.email_service.smtplib.SMTP')
     def test_send_email_login_failure(self, mock_smtp_class):
         """send_email returns False when SMTP login fails."""
@@ -57,6 +59,7 @@ class TestSendEmail:
         
         assert result is False
 
+    @patch('app.email_service.EMAIL_BACKEND', 'smtp')
     @patch('app.email_service.smtplib.SMTP')
     def test_send_email_connection_failure(self, mock_smtp_class):
         """send_email returns False when SMTP connection fails."""
@@ -70,6 +73,7 @@ class TestSendEmail:
         
         assert result is False
 
+    @patch('app.email_service.EMAIL_BACKEND', 'smtp')
     @patch('app.email_service.smtplib.SMTP')
     def test_send_email_sendmail_failure(self, mock_smtp_class):
         """send_email returns False when sendmail fails."""
@@ -84,6 +88,64 @@ class TestSendEmail:
         )
         
         assert result is False
+
+
+class TestResendEmail:
+    """Test Resend email backend via HTTP API."""
+
+    @patch('app.email_service.EMAIL_BACKEND', 'resend')
+    @patch('app.email_service.RESEND_API_KEY', 're_test_key')
+    @patch('app.email_service.requests.post')
+    def test_send_email_resend_success(self, mock_post):
+        """send_email with resend backend succeeds on 200."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"id": "test_id"}
+        mock_post.return_value = mock_resp
+
+        result = send_email(
+            to_email="user@example.com",
+            subject="Test Resend",
+            html_content="<p>Test</p>"
+        )
+
+        assert result is True
+        mock_post.assert_called_once()
+        args, kwargs = mock_post.call_args
+        assert kwargs["json"]["to"] == ["user@example.com"]
+        assert kwargs["headers"]["Authorization"] == "Bearer re_test_key"
+
+    @patch('app.email_service.EMAIL_BACKEND', 'resend')
+    @patch('app.email_service.RESEND_API_KEY', 're_test_key')
+    @patch('app.email_service.requests.post')
+    def test_send_email_resend_error_response(self, mock_post):
+        """send_email with resend backend returns False on 4xx."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 422
+        mock_resp.text = '{"message": "Invalid to field"}'
+        mock_post.return_value = mock_resp
+
+        result = send_email(
+            to_email="invalid@example.com",
+            subject="Test Resend",
+            html_content="<p>Test</p>"
+        )
+
+        assert result is False
+
+    @patch('app.email_service.EMAIL_BACKEND', 'resend')
+    @patch('app.email_service.RESEND_API_KEY', '')
+    @patch('app.email_service.SMTP_PASSWORD', '')
+    def test_send_email_resend_missing_key(self):
+        """send_email with resend backend returns False when API key is missing."""
+        result = send_email(
+            to_email="user@example.com",
+            subject="Test Resend",
+            html_content="<p>Test</p>"
+        )
+
+        assert result is False
+
 
 
 class TestCommonStyles:

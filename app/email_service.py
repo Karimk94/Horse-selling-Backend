@@ -155,35 +155,39 @@ def _send_email_with_resend(
     html_content: str,
     timeout_seconds: int = 10,
 ) -> bool:
-    if not RESEND_API_KEY:
+    api_key = RESEND_API_KEY or SMTP_PASSWORD
+    if not api_key:
         logger.warning(
             "RESEND_API_KEY is not configured, skipping Resend email delivery."
         )
         return False
 
-    smtp_server = SMTP_SERVER or "smtp.resend.com"
-    smtp_port = SMTP_PORT or 587
-    smtp_user = SMTP_USER or "apikey"
-    smtp_password = SMTP_PASSWORD or RESEND_API_KEY
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "from": EMAIL_FROM,
+        "to": [to_email],
+        "subject": subject,
+        "html": html_content,
+    }
 
     try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = EMAIL_FROM
-        msg["To"] = to_email
-
-        html_part = MIMEText(html_content, "html")
-        msg.attach(html_part)
-
-        with smtplib.SMTP(smtp_server, smtp_port, timeout=timeout_seconds) as server:
-            server.starttls()
-            server.login(smtp_user, smtp_password)
-            server.sendmail(EMAIL_FROM, to_email, msg.as_string())
-
+        response = requests.post(
+            "https://api.resend.com/emails",
+            json=payload,
+            headers=headers,
+            timeout=timeout_seconds,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"Resend error {response.status_code}: {response.text}"
+            )
         return True
     except Exception as exc:
         increment_email_failure_count()
-        logger.warning("Resend SMTP email delivery failed for %s: %s", to_email, exc)
+        logger.warning("Resend email delivery failed for %s: %s", to_email, exc)
         return False
 
 
